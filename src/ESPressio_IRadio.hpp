@@ -21,10 +21,12 @@ public:
     virtual void OnRadioPacket(IRadio& radio, const RadioPacketView& packet) = 0;
 };
 
-/// <summary>Receives a lightweight signal that a radio has queued inbound work.</summary>
+/// <summary>Receives a lightweight task-context signal that a radio has queued inbound work.</summary>
 /// <remarks>
-/// Concrete driver/ISR callbacks may invoke this after placing data in bounded provider-owned storage. Implementations
-/// must keep this callback non-blocking; RadioWorker uses it only to wake its PrecisionThread schedule.
+/// A concrete provider may invoke this after placing data in bounded provider-owned storage when already running in a
+/// task/driver-callback context that may safely wake an ESPressio PrecisionThread. A hardware ISR must not invoke this
+/// contract directly; ISR-backed providers must defer the wake into an ISR-safe handoff/task context first. The signal
+/// itself must remain non-blocking and must never perform packet parsing, routing, authentication, or Foundation-Type work.
 /// </remarks>
 class IRadioWorkSignal {
 public:
@@ -58,7 +60,7 @@ public:
     /// <summary>Installs the worker-owned inbound packet receiver.</summary>
     virtual void SetReceiver(IRadioReceiver* receiver) noexcept = 0;
 
-    /// <summary>Installs the worker wake target used when asynchronous driver callbacks queue inbound work.</summary>
+    /// <summary>Installs the task-context worker wake target used when asynchronous driver callbacks queue inbound work.</summary>
     virtual void SetWorkSignal(IRadioWorkSignal* signal) noexcept = 0;
 
     /// <summary>
