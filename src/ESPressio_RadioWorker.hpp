@@ -7,6 +7,7 @@
 
 #include <ESPressio_PrecisionThread.hpp>
 #include <ESPressio_PrecisionThreadTraits.hpp>
+#include <ESPressio_Synchronization.hpp>
 #include <ESPressio_Time.hpp>
 
 #include "ESPressio_RadioTransport.hpp"
@@ -101,14 +102,14 @@ public:
 
     /// <summary>Returns a copy of the worker scheduling configuration.</summary>
     RadioWorkerConfiguration Configuration() const {
-        std::lock_guard<std::mutex> lock(_configurationMutex);
+        std::lock_guard<System::Synchronization::Mutex> lock(_configurationMutex);
         return _configuration;
     }
 
     /// <summary>Updates the PrecisionThread cadence/execution budget used for inbound servicing.</summary>
     void Configure(RadioWorkerConfiguration configuration) {
         {
-            std::lock_guard<std::mutex> lock(_configurationMutex);
+            std::lock_guard<System::Synchronization::Mutex> lock(_configurationMutex);
             _configuration = configuration;
         }
         ApplyRuntimeConfiguration(configuration);
@@ -162,7 +163,7 @@ private:
 
     RadioTransport& _transport;
     std::array<IRadio*, ESPRESSIO_RADIO_MAX_INTERFACES> _radios{};
-    mutable std::mutex _configurationMutex;
+    mutable System::Synchronization::Mutex _configurationMutex;
     RadioWorkerConfiguration _configuration{};
 };
 
