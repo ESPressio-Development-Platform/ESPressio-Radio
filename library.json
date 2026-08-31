@@ -16,14 +16,24 @@
       "platforms":"*"
     },
     {
+      "name":"ESPressio-Units",
+      "version":"https://github.com/ESPressio-Development-Platform/ESPressio-Units.git#main",
+      "platforms":"*"
+    },
+    {
       "name":"ESPressio-Observable",
       "version":"https://github.com/ESPressio-Development-Platform/ESPressio-Observable.git#feature/16-rtti-free-observer-registry",
       "platforms":"*"
     },
     {
+      "name":"ESPressio-Timing",
+      "version":"https://github.com/ESPressio-Development-Platform/ESPressio-Timing.git#feature/29-platform-clock-abstractions",
+      "platforms":"espressif32"
+    },
+    {
       "name":"ESPressio-Threads",
       "version":"https://github.com/ESPressio-Development-Platform/ESPressio-Threads.git#feature/73-memory-efficiency",
-      "platforms":"*"
+      "platforms":"espressif32"
     }
   ]
 }
