@@ -33,9 +33,9 @@ struct RadioWorkerConfiguration {
 /// Foundation Type. RadioTransport reconstructs/routes opaque messages and hands locally addressed messages onward to
 /// its configured receiver, which is expected to be the Security/authentication boundary.
 ///
-/// Callback/interrupt-driven providers queue their packet bytes in provider-owned bounded storage and call
+/// Callback-driven providers queue their packet bytes in provider-owned bounded storage and call
 /// IRadioWorkSignal::OnRadioWorkAvailable(). That only bumps this PrecisionThread. Provider queues and hardware are
-/// drained here, so RadioTransport processing never runs inside a Wi-Fi/ESP-NOW/ISR callback.
+/// processed here, so RadioTransport processing never runs inside a Wi-Fi/ESP-NOW driver callback.
 ///
 /// PrecisionThread is intentional rather than EventThread: inbound radio availability is scheduling/work state, not an
 /// ESPressio Foundation Event. The worker therefore remains completely unaware of Event payload types while still
@@ -75,7 +75,7 @@ public:
     RadioWorker& operator=(RadioWorker&&) = delete;
 
     /// <summary>
-    /// Adds a radio to RadioTransport and makes this worker the sole inbound-drain path for that interface.
+    /// Adds a radio to RadioTransport and makes this worker the sole inbound-service path for that interface.
     /// </summary>
     bool AddInterface(IRadio& radio, bool defaultRoute = false) noexcept {
         for (IRadio* existing : _radios) {
@@ -123,7 +123,7 @@ public:
     }
 
     /// <summary>
-    /// Receives one provider-drained link packet on the RadioWorker thread and advances it into RadioTransport.
+    /// Receives one provider-serviced link packet on the RadioWorker thread and advances it into RadioTransport.
     /// </summary>
     void OnRadioPacket(IRadio& radio, const RadioPacketView& packet) override {
         // The onward-transport path gets priority. Supplemental observers run only after transport has consumed the view.
@@ -132,7 +132,7 @@ public:
     }
 
 protected:
-    /// <summary>Drains all attached radio interfaces for currently available inbound packets.</summary>
+    /// <summary>Services all attached radio interfaces for currently available inbound packets.</summary>
     void Iterate(
         Time,
         Time,
@@ -140,7 +140,7 @@ protected:
     ) override {
         for (IRadio* radio : _radios) {
             if (radio != nullptr && radio->IsStarted()) {
-                radio->DrainInbound();
+                radio->ProcessInbound();
             }
         }
     }
