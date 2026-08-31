@@ -4,13 +4,17 @@
 #include <cstdint>
 
 #include "ESPressio_RadioTypes.hpp"
+#include "ESPressio_RadioObservers.hpp"
 
 namespace ESPressio::Radio {
 
 class IRadio;
 
 /// <summary>Receives complete link-layer packets from a concrete radio provider.</summary>
-/// <remarks>The packet payload is borrowed and is valid only for the duration of the callback.</remarks>
+/// <remarks>
+/// The packet payload is borrowed and is valid only for the duration of the callback. This single receiver is the
+/// ownership/delivery path used by RadioTransport; supplemental one-to-many observation is exposed through Observers().
+/// </remarks>
 class IRadioReceiver {
 public:
     virtual ~IRadioReceiver() = default;
@@ -40,6 +44,9 @@ public:
     ) = 0;
 
     virtual void SetReceiver(IRadioReceiver* receiver) noexcept = 0;
+
+    /// <summary>Gets the ESPressio Observable callback-subscription surface for this radio.</summary>
+    virtual RadioObserverSubscriptions& Observers() noexcept = 0;
 
     /// <summary>Allows polling-based providers to advance receive/TX work; interrupt-driven providers may no-op.</summary>
     virtual void Poll() {}
