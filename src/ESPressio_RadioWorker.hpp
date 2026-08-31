@@ -132,7 +132,7 @@ public:
     }
 
 protected:
-    /// <summary>Services all attached radio interfaces for currently available inbound packets.</summary>
+    /// <summary>Drains all attached radio interfaces for currently available inbound packets.</summary>
     void Iterate(
         Time,
         Time,
@@ -140,7 +140,7 @@ protected:
     ) override {
         for (IRadio* radio : _radios) {
             if (radio != nullptr && radio->IsStarted()) {
-                radio->ProcessInbound();
+                radio->DrainInbound();
             }
         }
     }
