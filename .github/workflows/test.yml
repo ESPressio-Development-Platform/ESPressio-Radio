@@ -15,7 +15,56 @@ jobs:
         run: git clone --depth 1 --branch feature/1-system-memory-policy https://github.com/ESPressio-Development-Platform/ESPressio-System.git deps/System
       - name: Checkout ESPressio Observable working branch
         run: git clone --depth 1 --branch feature/16-rtti-free-observer-registry https://github.com/ESPressio-Development-Platform/ESPressio-Observable.git deps/Observable
-      - name: Build tests
+      - name: Build transport tests
         run: g++ -std=c++17 -Wall -Wextra -Werror -Isrc -Ideps/System/src -Ideps/Observable/src tests/radio_transport_tests.cpp -o radio_transport_tests -pthread
-      - name: Run tests
+      - name: Run transport tests
         run: ./radio_transport_tests
+
+  esp32-worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Install PlatformIO
+        run: pip install platformio
+      - name: Create current-working-branch worker smoke project
+        shell: bash
+        run: |
+          PROJECT="$RUNNER_TEMP/espressio-radio-worker-ci"
+          mkdir -p "$PROJECT/src"
+          cat > "$PROJECT/platformio.ini" <<'EOF'
+          [env:esp32dev]
+          platform = https://github.com/pioarduino/platform-espressif32/releases/download/55.03.311/platform-espressif32.zip
+          board = esp32dev
+          framework = arduino
+          build_flags = -std=gnu++17
+          build_unflags = -std=gnu++11
+          lib_ldf_mode = deep+
+          lib_deps =
+              https://github.com/ESPressio-Development-Platform/ESPressio-System.git#feature/1-system-memory-policy
+              https://github.com/ESPressio-Development-Platform/ESPressio-Units.git#item_4_saturation_testing
+              https://github.com/ESPressio-Development-Platform/ESPressio-Observable.git#feature/16-rtti-free-observer-registry
+              https://github.com/ESPressio-Development-Platform/ESPressio-Timing.git#item_4_saturation_testing
+              https://github.com/ESPressio-Development-Platform/ESPressio-Threads.git#optimisation/69-resource-footprint
+              https://github.com/ESPressio-Development-Platform/ESPressio-Radio.git#feature/1-radio-transport
+          EOF
+          cat > "$PROJECT/src/main.cpp" <<'EOF'
+          #include <Arduino.h>
+          #include <ESPressio_Radio.hpp>
+
+          ESPressio::Radio::RadioTransport transport(1);
+          ESPressio::Radio::RadioWorker worker(transport);
+
+          void setup() {
+              ESPressio::Radio::RadioWorkerConfiguration configuration;
+              configuration.IterationPeriodMilliseconds = 10;
+              configuration.DesiredExecutionBudgetMilliseconds = 2;
+              worker.Configure(configuration);
+          }
+
+          void loop() {}
+          EOF
+      - name: Compile worker against current Working Branch APIs
+        run: pio run -d "$RUNNER_TEMP/espressio-radio-worker-ci"
