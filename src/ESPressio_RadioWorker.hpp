@@ -37,8 +37,9 @@ struct RadioWorkerConfiguration {
 /// IRadioWorkSignal::OnRadioWorkAvailable(). That only bumps this PrecisionThread. Provider queues and hardware are
 /// drained here, so RadioTransport processing never runs inside a Wi-Fi/ESP-NOW/ISR callback.
 ///
-/// RadioWorker intentionally uses the existing ESPressio Threads observer facilities inherited from PrecisionThread
-/// for thread lifecycle/iteration observation rather than creating a duplicate worker-specific callback mechanism.
+/// PrecisionThread is intentional rather than EventThread: inbound radio availability is scheduling/work state, not an
+/// ESPressio Foundation Event. The worker therefore remains completely unaware of Event payload types while still
+/// gaining the common Threads lifecycle, observation, cadence and rate-limiting behaviour.
 /// </remarks>
 class RadioWorker final
     : public Threads::PrecisionThread<
@@ -125,8 +126,8 @@ public:
     /// Receives one provider-drained link packet on the RadioWorker thread and advances it into RadioTransport.
     /// </summary>
     void OnRadioPacket(IRadio& radio, const RadioPacketView& packet) override {
-        // The transport path gets priority. Supplemental observers run only after the packet has been advanced onward.
-        _transport.OnRadioPacket(radio, packet);
+        // The onward-transport path gets priority. Supplemental observers run only after transport has consumed the view.
+        _transport.ProcessInboundPacket(radio, packet);
         radio.Observers().NotifyPacketReceived(radio, packet);
     }
 
