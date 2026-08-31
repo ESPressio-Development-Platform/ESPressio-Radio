@@ -384,7 +384,15 @@ public:
         if (wasStarted) _observers.NotifyStopped(*this);
     }
 
-    void Poll() { for (auto& record : _interfaces) if (record.Radio != nullptr) record.Radio->Poll(); }
+    /// <summary>
+    /// Manually drains all configured interfaces. RadioWorker is the preferred scheduled path; this method remains
+    /// useful for deterministic tests and applications that intentionally own their servicing loop.
+    /// </summary>
+    void Poll() {
+        for (auto& record : _interfaces) {
+            if (record.Radio != nullptr && record.Radio->IsStarted()) record.Radio->ProcessInbound();
+        }
+    }
 
     RadioTransportSendResult Send(RadioNodeId destination, RadioChannel channel, const uint8_t* payload, std::size_t payloadSize) {
         RadioTransportSendResult result;
