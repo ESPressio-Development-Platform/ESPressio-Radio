@@ -5,7 +5,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <memory>
 
 #include <ESPressio_Memory.hpp>
 
@@ -168,11 +167,19 @@ private:
         }
     };
 
-    std::shared_ptr<Dispatcher> _dispatcher;
+    using DispatcherOwner = decltype(System::Memory::MakeShared<
+        Dispatcher,
+        System::Memory::MemoryPolicy::ExternalPreferred
+    >());
+
+    DispatcherOwner _dispatcher;
 
 public:
     RadioTransportObserverSubscriptions()
-        : _dispatcher(System::Memory::MakeShared<Dispatcher, System::Memory::MemoryPolicy::ExternalPreferred>()) {}
+        : _dispatcher(System::Memory::MakeShared<
+            Dispatcher,
+            System::Memory::MemoryPolicy::ExternalPreferred
+        >()) {}
 
     template<typename... ObserverInterfaces, typename TObserver>
     Observable::ObserverHandlePtr Subscribe(TObserver* observer) {
@@ -195,8 +202,9 @@ public:
 /// <summary>
 /// Hardware-neutral radio onward transport. It fragments/reassembles opaque bytes and resolves a final logical node
 /// to a radio interface/next-hop address. It deliberately does not inspect primitive payloads or establish trust.
+/// Inbound link packets enter this type only through RadioWorker.
 /// </summary>
-class RadioTransport final : public IRadioReceiver {
+class RadioTransport final {
 private:
     static constexpr uint8_t WireMagic0 = 0xE5u;
     static constexpr uint8_t WireMagic1 = 0x52u;
@@ -342,10 +350,14 @@ public:
 
     bool AddInterface(IRadio& radio, bool defaultRoute = false) noexcept {
         if (auto* existing = FindInterface(&radio)) {
-            existing->DefaultRoute = defaultRoute; radio.SetReceiver(this); _observers.NotifyInterfaceConfigured(*this, radio, defaultRoute); return true;
+            existing->DefaultRoute = defaultRoute;
+            _observers.NotifyInterfaceConfigured(*this, radio, defaultRoute);
+            return true;
         }
         for (auto& record : _interfaces) if (record.Radio == nullptr) {
-            record = {&radio, defaultRoute}; radio.SetReceiver(this); _observers.NotifyInterfaceConfigured(*this, radio, defaultRoute); return true;
+            record = {&radio, defaultRoute};
+            _observers.NotifyInterfaceConfigured(*this, radio, defaultRoute);
+            return true;
         }
         return false;
     }
@@ -384,16 +396,6 @@ public:
         if (wasStarted) _observers.NotifyStopped(*this);
     }
 
-    /// <summary>
-    /// Manually drains all configured interfaces. RadioWorker is the preferred scheduled path; this method remains
-    /// useful for deterministic tests and applications that intentionally own their servicing loop.
-    /// </summary>
-    void Poll() {
-        for (auto& record : _interfaces) {
-            if (record.Radio != nullptr && record.Radio->IsStarted()) record.Radio->ProcessInbound();
-        }
-    }
-
     RadioTransportSendResult Send(RadioNodeId destination, RadioChannel channel, const uint8_t* payload, std::size_t payloadSize) {
         RadioTransportSendResult result;
         if (destination == 0 || destination == _localNode) result = {RadioTransportSendStatus::InvalidDestination, {}};
@@ -407,7 +409,11 @@ public:
         return result;
     }
 
-    void OnRadioPacket(IRadio&, const RadioPacketView& packet) override {
+    /// <summary>
+    /// Accepts one link-layer packet from RadioWorker for opaque transport reassembly and route handling.
+    /// This method does not authenticate/decrypt the carried message or interpret Foundation Type semantics.
+    /// </summary>
+    void ProcessInboundPacket(IRadio&, const RadioPacketView& packet) {
         WireHeader h;
         if (!DecodeHeader(packet.Payload, packet.PayloadSize, h)) return;
         if (h.Source == 0 || h.Source == _localNode || h.Destination == 0 || IsRecent(h)) return;
