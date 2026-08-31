@@ -34,9 +34,9 @@ struct RadioWorkerConfiguration {
 /// its configured receiver, which is expected to be the Security/authentication boundary.
 ///
 /// Callback-driven providers queue their packet bytes in provider-owned bounded storage and call
-/// IRadioWorkSignal::OnRadioWorkAvailable(). That requests an explicit PrecisionThread work wake through the current
-/// Threads API. Provider queues and hardware are drained here, so RadioTransport processing never runs inside a
-/// Wi-Fi/ESP-NOW driver callback.
+/// IRadioWorkSignal::OnRadioWorkAvailable(). The current PrecisionThread Working Branch exposes Bump() for this purpose:
+/// it advances the next iteration to the current clock time and signals the scheduler. Provider queues and hardware are
+/// drained by Iterate(), so RadioTransport processing never runs inside a Wi-Fi/ESP-NOW driver callback.
 ///
 /// PrecisionThread is intentional rather than EventThread: inbound radio availability is scheduling/work state, not an
 /// ESPressio Foundation Event. The worker therefore remains completely unaware of Event payload types while still
@@ -112,16 +112,16 @@ public:
             _configuration = configuration;
         }
         ApplyRuntimeConfiguration(configuration);
-        WakeForWork();
+        Bump();
     }
 
     /// <summary>
-    /// Wakes the worker after a concrete provider has queued asynchronous inbound work.
+    /// Requests an immediate worker iteration after a concrete provider has queued asynchronous inbound work.
     /// No packet parsing, routing, authentication, or observer dispatch occurs on the provider callback thread.
     /// </summary>
     void OnRadioWorkAvailable(IRadio&) noexcept override {
         try {
-            WakeForWork();
+            Bump();
         } catch (...) {
             // A provider work signal must never let scheduler failures escape into a driver callback context.
         }
@@ -137,22 +137,12 @@ public:
     }
 
 protected:
-    /// <summary>Handles an explicit asynchronous work wake from a callback-driven radio provider.</summary>
-    void OnWorkWake() override {
-        DrainInterfaces();
-    }
-
-    /// <summary>Performs the periodic fallback service pass for all attached radio interfaces.</summary>
+    /// <summary>Services all attached radio interfaces for currently available inbound packets.</summary>
     void Iterate(
         Time,
         Time,
         Threads::SkippedIterationCount
     ) override {
-        DrainInterfaces();
-    }
-
-private:
-    void DrainInterfaces() {
         for (IRadio* radio : _radios) {
             if (radio != nullptr && radio->IsStarted()) {
                 radio->DrainInbound();
@@ -160,6 +150,7 @@ private:
         }
     }
 
+private:
     void ApplyRuntimeConfiguration(const RadioWorkerConfiguration& configuration) {
         SetIterationPeriod(
             Units::MilliSeconds<uint32_t>(configuration.IterationPeriodMilliseconds)
