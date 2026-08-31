@@ -43,6 +43,10 @@ It does **not** authenticate/decrypt messages and it does **not** inspect Comman
 
 Callback-driven providers such as ESP32 raw 802.11 and ESP-NOW copy accepted inbound packet data into bounded provider-owned queues and invoke only `IRadioWorkSignal::OnRadioWorkAvailable()`. That signal calls `PrecisionThread::Bump()`; parsing, routing, observer notification and onward delivery are deferred to the Radio worker thread. Providers such as nRF24 that may not have an IRQ integration are serviced by the worker's normal bounded iteration cadence.
 
+There is intentionally no public `RadioTransport::Poll()` path. `RadioTransport::AddInterface()` records transport topology only and does not install itself as a radio receiver. `RadioWorker::AddInterface()` owns the production inbound binding and installs itself as the provider receiver/work signal.
+
+`PrecisionThread` is used rather than `EventThread` because radio work availability is scheduling state, not a Foundation Event. This keeps the Radio worker unaware of ESPressio Event payload types while retaining the common Threads cadence/rate-control and lifecycle observation model.
+
 `RadioWorkerConfiguration` exposes:
 
 - `IterationPeriodMilliseconds` — maximum idle interval between inbound service passes;
@@ -151,12 +155,14 @@ The receiver registered with `RadioTransport::SetReceiver()` receives a complete
 
 ## Memory behaviour
 
-The fixed interface, route, recent-message, and reassembly registries avoid unbounded registry allocation. Reassembly payload storage and the Observable dispatcher ownership use the common ESPressio System `ExternalPreferred` memory abstraction, keeping eligible storage available to platform external memory such as ESP32 PSRAM.
+The fixed interface, route, recent-message, and reassembly registries avoid unbounded registry allocation. Reassembly payload storage uses `System::Memory::ByteVector<ExternalPreferred>` so its dynamic storage is routed through the active ESPressio-System memory provider.
 
-Callback-driven concrete providers use bounded RX queues and do not allocate while running inside radio-driver callbacks. The queue depth remains concrete-specific and compile-time configurable.
+The Observable implementation requires shared ownership for safe subscription lifetime handling. Radio therefore obtains dispatcher ownership **only** through `System::Memory::MakeShared<..., ExternalPreferred>()`; Radio does not directly name `std::shared_ptr`, call `std::make_shared`, or perform raw owning allocation. This keeps the ownership requirement behind ESPressio-System while allowing the installed platform provider, such as ESPressio-ESP32, to decide the actual memory region.
+
+Callback-driven concrete providers use bounded inline RX queues and do not allocate while running inside radio-driver callbacks. The queue depth remains concrete-specific and compile-time configurable.
 
 The default RadioTransport bounds are configurable at compile time with `ESPRESSIO_RADIO_MAX_INTERFACES`, `ESPRESSIO_RADIO_MAX_ROUTES`, `ESPRESSIO_RADIO_MAX_REASSEMBLIES`, `ESPRESSIO_RADIO_MAX_RECENT_MESSAGES`, and `ESPRESSIO_RADIO_MAX_MESSAGE_BYTES`.
 
 ## Validation
 
-Native tests exercise fragmentation/reassembly, heterogeneous cross-radio forwarding with different link MTUs, typed one-to-many Observer callbacks, lifecycle/topology/message observations, and RAII subscription removal. ESP32 PlatformIO smoke validation additionally compiles the `RadioWorker`/raw-802.11 provider integration against the current ESPressio System, Observable, and Threads working branches.
+Native tests exercise fragmentation/reassembly, heterogeneous cross-radio forwarding with different link MTUs, typed one-to-many Observer callbacks, lifecycle/topology/message observations, and RAII subscription removal. The transport tests use a synchronous test-only ingress shim so they exercise the same `ProcessInboundPacket()` boundary that production `RadioWorker` owns. ESP32 PlatformIO smoke validation additionally compiles the `RadioWorker`/raw-802.11 provider integration against the current ESPressio System, Observable, and Threads working branches.
