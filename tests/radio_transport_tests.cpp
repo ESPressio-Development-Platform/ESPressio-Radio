@@ -4,7 +4,7 @@
 #include <cstring>
 #include <vector>
 
-#include <ESPressio_Radio.hpp>
+#include <ESPressio_RadioTransport.hpp>
 
 using namespace ESPressio::Radio;
 
@@ -30,6 +30,8 @@ public:
     }
     RadioAddress LocalAddress() const noexcept override { return _local; }
     void SetReceiver(IRadioReceiver* receiver) noexcept override { _receiver = receiver; }
+    void SetWorkSignal(IRadioWorkSignal* signal) noexcept override { _workSignal = signal; }
+    void ProcessInbound() override {}
     RadioObserverSubscriptions& Observers() noexcept override { return _observers; }
     void Connect(FakeRadio& peer) noexcept { _peer = &peer; }
 
@@ -50,6 +52,7 @@ public:
         packet.Flags = destination.IsBroadcast() ? RadioPacketFlag::Broadcast : RadioPacketFlag::None;
         _peer->_receiver->OnRadioPacket(*_peer, packet);
         _peer->_observers.NotifyPacketReceived(*_peer, packet);
+        if (_peer->_workSignal != nullptr) _peer->_workSignal->OnRadioWorkAvailable(*_peer);
         return complete(RadioSendResult::Accepted());
     }
 
@@ -58,6 +61,7 @@ private:
     uint16_t _mtu = 0;
     bool _started = false;
     IRadioReceiver* _receiver = nullptr;
+    IRadioWorkSignal* _workSignal = nullptr;
     RadioObserverSubscriptions _observers{};
     FakeRadio* _peer = nullptr;
 };
