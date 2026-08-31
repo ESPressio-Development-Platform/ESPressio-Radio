@@ -1,7 +1,7 @@
 {
   "name": "ESPressio-Radio",
   "description": "Hardware-agnostic packet-radio onward transport for ESPressio messages",
-  "keywords": "espressio,radio,transport,packet,routing,fragmentation,reassembly,observable,observer,thread,worker",
+  "keywords": "espressio,radio,transport,packet,routing,fragmentation,reassembly,observable,observer,event,bridge,thread,worker",
   "authors": {"name":"Simon J. Stuart","maintainer":true,"url":"https://espressio.org"},
   "build": {"flags":["-std=gnu++17","-DESPRESSIO_RADIO"]},
   "repository": {"type":"git","url":"https://github.com/ESPressio-Development-Platform/ESPressio-Radio.git"},
@@ -33,6 +33,11 @@
     {
       "name":"ESPressio-Threads",
       "version":"https://github.com/ESPressio-Development-Platform/ESPressio-Threads.git#optimisation/69-resource-footprint",
+      "platforms":"espressif32"
+    },
+    {
+      "name":"ESPressio-Event",
+      "version":"https://github.com/ESPressio-Development-Platform/ESPressio-Event.git#item_4_saturation_testing",
       "platforms":"espressif32"
     }
   ]
