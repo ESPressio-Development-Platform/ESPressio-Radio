@@ -31,7 +31,7 @@ public:
     RadioAddress LocalAddress() const noexcept override { return _local; }
     void SetReceiver(IRadioReceiver* receiver) noexcept override { _receiver = receiver; }
     void SetWorkSignal(IRadioWorkSignal* signal) noexcept override { _workSignal = signal; }
-    void DrainInbound() override {}
+    void ProcessInbound() override {}
     RadioObserverSubscriptions& Observers() noexcept override { return _observers; }
     void Connect(FakeRadio& peer) noexcept { _peer = &peer; }
 
