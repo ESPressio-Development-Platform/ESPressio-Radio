@@ -35,7 +35,7 @@ struct RadioWorkerConfiguration {
 ///
 /// Callback-driven providers queue their packet bytes in provider-owned bounded storage and call
 /// IRadioWorkSignal::OnRadioWorkAvailable(). That only bumps this PrecisionThread. Provider queues and hardware are
-/// processed here, so RadioTransport processing never runs inside a Wi-Fi/ESP-NOW driver callback.
+/// drained here, so RadioTransport processing never runs inside a Wi-Fi/ESP-NOW driver callback.
 ///
 /// PrecisionThread is intentional rather than EventThread: inbound radio availability is scheduling/work state, not an
 /// ESPressio Foundation Event. The worker therefore remains completely unaware of Event payload types while still
@@ -123,7 +123,7 @@ public:
     }
 
     /// <summary>
-    /// Receives one provider-serviced link packet on the RadioWorker thread and advances it into RadioTransport.
+    /// Receives one provider-drained link packet on the RadioWorker thread and advances it into RadioTransport.
     /// </summary>
     void OnRadioPacket(IRadio& radio, const RadioPacketView& packet) override {
         // The onward-transport path gets priority. Supplemental observers run only after transport has consumed the view.
@@ -132,7 +132,7 @@ public:
     }
 
 protected:
-    /// <summary>Services all attached radio interfaces for currently available inbound packets.</summary>
+    /// <summary>Drains all attached radio interfaces for currently available inbound packets.</summary>
     void Iterate(
         Time,
         Time,
@@ -140,7 +140,7 @@ protected:
     ) override {
         for (IRadio* radio : _radios) {
             if (radio != nullptr && radio->IsStarted()) {
-                radio->ProcessInbound();
+                radio->DrainInbound();
             }
         }
     }
