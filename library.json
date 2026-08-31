@@ -1,7 +1,7 @@
 {
   "name": "ESPressio-Radio",
   "description": "Hardware-agnostic packet-radio onward transport for ESPressio messages",
-  "keywords": "espressio,radio,transport,packet,routing,fragmentation,reassembly,observable,observer",
+  "keywords": "espressio,radio,transport,packet,routing,fragmentation,reassembly,observable,observer,thread,worker",
   "authors": {"name":"Simon J. Stuart","maintainer":true,"url":"https://espressio.org"},
   "build": {"flags":["-std=gnu++17","-DESPRESSIO_RADIO"]},
   "repository": {"type":"git","url":"https://github.com/ESPressio-Development-Platform/ESPressio-Radio.git"},
@@ -18,6 +18,11 @@
     {
       "name":"ESPressio-Observable",
       "version":"https://github.com/ESPressio-Development-Platform/ESPressio-Observable.git#feature/16-rtti-free-observer-registry",
+      "platforms":"*"
+    },
+    {
+      "name":"ESPressio-Threads",
+      "version":"https://github.com/ESPressio-Development-Platform/ESPressio-Threads.git#feature/73-memory-efficiency",
       "platforms":"*"
     }
   ]
