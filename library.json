@@ -1,0 +1,19 @@
+{
+  "name": "ESPressio-Radio",
+  "description": "Hardware-agnostic packet-radio onward transport for ESPressio messages",
+  "keywords": "espressio,radio,transport,packet,routing,fragmentation,reassembly",
+  "authors": {"name":"Simon J. Stuart","maintainer":true,"url":"https://espressio.org"},
+  "build": {"flags":["-std=gnu++17","-DESPRESSIO_RADIO"]},
+  "repository": {"type":"git","url":"https://github.com/ESPressio-Development-Platform/ESPressio-Radio.git"},
+  "version": "1.0.0",
+  "license": "Apache-2.0",
+  "frameworks": "*",
+  "platforms": "*",
+  "dependencies": [
+    {
+      "name":"ESPressio-System",
+      "version":"https://github.com/ESPressio-Development-Platform/ESPressio-System.git#feature/1-system-memory-policy",
+      "platforms":"*"
+    }
+  ]
+}
