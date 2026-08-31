@@ -13,21 +13,35 @@ public:
     explicit FakeRadio(uint8_t addressByte, uint16_t mtu)
         : _local(RadioAddress::FromBytes(&addressByte, 1)), _mtu(mtu) {}
 
-    bool Start() override { _started = true; return true; }
-    void Stop() noexcept override { _started = false; }
+    bool Start() override {
+        if (_started) return true;
+        _started = true;
+        _observers.NotifyStarted(*this);
+        return true;
+    }
+    void Stop() noexcept override {
+        if (!_started) return;
+        _started = false;
+        _observers.NotifyStopped(*this);
+    }
     bool IsStarted() const noexcept override { return _started; }
     RadioCapabilities Capabilities() const noexcept override {
         return {RadioCapability::Broadcast | RadioCapability::HardwareAddressing, _mtu, 1};
     }
     RadioAddress LocalAddress() const noexcept override { return _local; }
     void SetReceiver(IRadioReceiver* receiver) noexcept override { _receiver = receiver; }
+    RadioObserverSubscriptions& Observers() noexcept override { return _observers; }
     void Connect(FakeRadio& peer) noexcept { _peer = &peer; }
 
     RadioSendResult Send(const RadioAddress& destination, const uint8_t* payload, std::size_t size) override {
-        if (!_started) return {RadioSendStatus::NotStarted, 0};
-        if (size > _mtu) return {RadioSendStatus::PayloadTooLarge, 0};
-        if (_peer == nullptr || _peer->_receiver == nullptr) return {RadioSendStatus::NativeFailure, 0};
-        if (destination != _peer->_local && !destination.IsBroadcast()) return {RadioSendStatus::InvalidAddress, 0};
+        const auto complete = [&](RadioSendResult result) {
+            _observers.NotifySendCompleted(*this, destination, size, result);
+            return result;
+        };
+        if (!_started) return complete({RadioSendStatus::NotStarted, 0});
+        if (size > _mtu) return complete({RadioSendStatus::PayloadTooLarge, 0});
+        if (_peer == nullptr || _peer->_receiver == nullptr) return complete({RadioSendStatus::NativeFailure, 0});
+        if (destination != _peer->_local && !destination.IsBroadcast()) return complete({RadioSendStatus::InvalidAddress, 0});
         RadioPacketView packet;
         packet.Source = _local;
         packet.Destination = destination;
@@ -35,7 +49,8 @@ public:
         packet.PayloadSize = size;
         packet.Flags = destination.IsBroadcast() ? RadioPacketFlag::Broadcast : RadioPacketFlag::None;
         _peer->_receiver->OnRadioPacket(*_peer, packet);
-        return RadioSendResult::Accepted();
+        _peer->_observers.NotifyPacketReceived(*_peer, packet);
+        return complete(RadioSendResult::Accepted());
     }
 
 private:
@@ -43,6 +58,7 @@ private:
     uint16_t _mtu = 0;
     bool _started = false;
     IRadioReceiver* _receiver = nullptr;
+    RadioObserverSubscriptions _observers{};
     FakeRadio* _peer = nullptr;
 };
 
@@ -55,7 +71,6 @@ public:
         Payload.assign(message.Payload, message.Payload + message.PayloadSize);
         ++Count;
     }
-
     RadioNodeId Source = 0;
     RadioNodeId Destination = 0;
     RadioChannel Channel = 0;
@@ -63,14 +78,74 @@ public:
     int Count = 0;
 };
 
-static void TestFragmentedDirectDelivery() {
+class LinkObserver final :
+    public IRadioLifecycleObserver,
+    public IRadioPacketObserver,
+    public IRadioSendObserver {
+public:
+    void OnRadioStarted(IRadio&) override { ++Started; }
+    void OnRadioStopped(IRadio&) override { ++Stopped; }
+    void OnRadioPacketReceived(IRadio&, const RadioPacketView&) override { ++Received; }
+    void OnRadioSendCompleted(IRadio&, const RadioAddress&, std::size_t, const RadioSendResult& result) override {
+        ++Sent;
+        LastSendAccepted = static_cast<bool>(result);
+    }
+    int Started = 0;
+    int Stopped = 0;
+    int Received = 0;
+    int Sent = 0;
+    bool LastSendAccepted = false;
+};
+
+class TransportObserver final :
+    public IRadioTransportLifecycleObserver,
+    public IRadioTransportTopologyObserver,
+    public IRadioTransportMessageObserver {
+public:
+    void OnRadioTransportStarted(RadioTransport&) override { ++Started; }
+    void OnRadioTransportStopped(RadioTransport&) override { ++Stopped; }
+    void OnRadioInterfaceConfigured(RadioTransport&, IRadio&, bool) override { ++Interfaces; }
+    void OnRadioRouteConfigured(RadioTransport&, RadioNodeId, IRadio&, const RadioAddress&) override { ++Routes; }
+    void OnRadioRouteRemoved(RadioTransport&, RadioNodeId) override { ++RoutesRemoved; }
+    void OnRadioTransportSendCompleted(RadioTransport&, RadioNodeId, RadioChannel, std::size_t, const RadioTransportSendResult& result) override {
+        ++Sends;
+        LastSendAccepted = static_cast<bool>(result);
+    }
+    void OnRadioTransportMessageReceived(RadioTransport&, const RadioTransportMessageView&) override { ++Received; }
+    void OnRadioTransportMessageForwarded(RadioTransport&, const RadioTransportMessageView&, const RadioTransportSendResult& result) override {
+        ++Forwarded;
+        LastForwardAccepted = static_cast<bool>(result);
+    }
+    int Started = 0;
+    int Stopped = 0;
+    int Interfaces = 0;
+    int Routes = 0;
+    int RoutesRemoved = 0;
+    int Sends = 0;
+    int Received = 0;
+    int Forwarded = 0;
+    bool LastSendAccepted = false;
+    bool LastForwardAccepted = false;
+};
+
+static void TestFragmentedDirectDeliveryAndObservers() {
     FakeRadio radioA(0xA1, 32);
     FakeRadio radioB(0xB1, 32);
     radioA.Connect(radioB);
     radioB.Connect(radioA);
 
+    LinkObserver linkA;
+    LinkObserver linkB;
+    auto linkARegistration = radioA.Observers().Subscribe<IRadioLifecycleObserver, IRadioSendObserver>(&linkA);
+    auto linkBRegistration = radioB.Observers().Subscribe<IRadioLifecycleObserver, IRadioPacketObserver>(&linkB);
+
     RadioTransport nodeA(1);
     RadioTransport nodeB(2);
+    TransportObserver transportA;
+    TransportObserver transportB;
+    auto transportARegistration = nodeA.Observers().Subscribe<IRadioTransportLifecycleObserver, IRadioTransportTopologyObserver, IRadioTransportMessageObserver>(&transportA);
+    auto transportBRegistration = nodeB.Observers().Subscribe<IRadioTransportLifecycleObserver, IRadioTransportTopologyObserver, IRadioTransportMessageObserver>(&transportB);
+
     CaptureReceiver receiver;
     nodeB.SetReceiver(&receiver);
     assert(nodeA.AddInterface(radioA));
@@ -89,9 +164,32 @@ static void TestFragmentedDirectDelivery() {
     assert(receiver.Destination == 2);
     assert(receiver.Channel == 7);
     assert(receiver.Payload == payload);
+
+    assert(linkA.Started == 1);
+    assert(linkA.Sent > 1);
+    assert(linkA.LastSendAccepted);
+    assert(linkB.Started == 1);
+    assert(linkB.Received == linkA.Sent);
+    assert(transportA.Interfaces == 1);
+    assert(transportA.Routes == 1);
+    assert(transportA.Started == 1);
+    assert(transportA.Sends == 1);
+    assert(transportA.LastSendAccepted);
+    assert(transportB.Received == 1);
+
+    const int sendsBeforeUnsubscribe = transportA.Sends;
+    transportARegistration.reset();
+    assert(nodeA.Send(2, 7, payload.data(), 1));
+    assert(transportA.Sends == sendsBeforeUnsubscribe);
+
+    nodeA.Stop();
+    nodeB.Stop();
+    assert(linkA.Stopped == 1);
+    assert(linkB.Stopped == 1);
+    assert(transportB.Stopped == 1);
 }
 
-static void TestCrossRadioForwarding() {
+static void TestCrossRadioForwardingObserver() {
     FakeRadio radioAB_A(0xA2, 32);
     FakeRadio radioAB_B(0xB2, 32);
     FakeRadio radioBC_B(0xB3, 64);
@@ -104,6 +202,8 @@ static void TestCrossRadioForwarding() {
     RadioTransport nodeA(10, 4);
     RadioTransport nodeB(20, 4);
     RadioTransport nodeC(30, 4);
+    TransportObserver bridgeObserver;
+    auto bridgeRegistration = nodeB.Observers().Subscribe<IRadioTransportMessageObserver>(&bridgeObserver);
     CaptureReceiver receiver;
     nodeC.SetReceiver(&receiver);
 
@@ -128,10 +228,12 @@ static void TestCrossRadioForwarding() {
     assert(receiver.Channel == 11);
     assert(receiver.Payload.size() == payload.size());
     assert(std::memcmp(receiver.Payload.data(), payload.data(), payload.size()) == 0);
+    assert(bridgeObserver.Forwarded == 1);
+    assert(bridgeObserver.LastForwardAccepted);
 }
 
 int main() {
-    TestFragmentedDirectDelivery();
-    TestCrossRadioForwarding();
+    TestFragmentedDirectDeliveryAndObservers();
+    TestCrossRadioForwardingObserver();
     return 0;
 }
