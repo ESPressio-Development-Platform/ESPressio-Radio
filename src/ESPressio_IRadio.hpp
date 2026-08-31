@@ -38,7 +38,7 @@ public:
 /// <remarks>
 /// Implementations transport opaque bytes only. They do not understand ESPressio primitives, application routing,
 /// authentication, serialization, or message semantics. Inbound processing is owned by RadioWorker: providers queue
-/// callback-driven traffic where necessary and expose that queued/hardware traffic through ProcessInbound().
+/// callback-driven traffic where necessary and expose that queued/hardware traffic only through DrainInbound().
 /// </remarks>
 class IRadio {
 public:
@@ -64,10 +64,10 @@ public:
     virtual void SetWorkSignal(IRadioWorkSignal* signal) noexcept = 0;
 
     /// <summary>
-    /// Drains currently available inbound link packets and delivers them to the installed receiver.
-    /// This is an internal worker-facing operation and must not create a second scheduling or semantic layer.
+    /// Drains currently available inbound link packets into the worker-owned receiver.
+    /// This is an internal RadioWorker operation, not an application polling API or independent scheduling layer.
     /// </summary>
-    virtual void ProcessInbound() = 0;
+    virtual void DrainInbound() = 0;
 
     /// <summary>Gets the ESPressio Observable callback-subscription surface for this radio.</summary>
     virtual RadioObserverSubscriptions& Observers() noexcept = 0;
