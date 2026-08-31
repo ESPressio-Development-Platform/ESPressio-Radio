@@ -1,0 +1,17 @@
+name: Radio Tests
+
+on:
+  push:
+    branches:
+      - feature/1-radio-transport
+  pull_request:
+
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build tests
+        run: g++ -std=c++17 -Wall -Wextra -Werror -Itests/stubs -Isrc tests/radio_transport_tests.cpp -o radio_transport_tests
+      - name: Run tests
+        run: ./radio_transport_tests
