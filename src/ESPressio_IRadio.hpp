@@ -12,8 +12,8 @@ class IRadio;
 
 /// <summary>Receives complete link-layer packets from a concrete radio provider.</summary>
 /// <remarks>
-/// The packet payload is borrowed and is valid only for the duration of the callback. This single receiver is the
-/// ownership/delivery path used by RadioTransport; supplemental one-to-many observation is exposed through Observers().
+/// The packet payload is borrowed and is valid only for the duration of the callback. RadioWorker installs itself as
+/// the receiver so link callbacks/driver queues are drained on the ESPressio worker thread before RadioTransport sees them.
 /// </remarks>
 class IRadioReceiver {
 public:
@@ -21,10 +21,22 @@ public:
     virtual void OnRadioPacket(IRadio& radio, const RadioPacketView& packet) = 0;
 };
 
+/// <summary>Receives a lightweight signal that a radio has queued inbound work.</summary>
+/// <remarks>
+/// Concrete driver/ISR callbacks may invoke this after placing data in bounded provider-owned storage. Implementations
+/// must keep this callback non-blocking; RadioWorker uses it only to wake its PrecisionThread schedule.
+/// </remarks>
+class IRadioWorkSignal {
+public:
+    virtual ~IRadioWorkSignal() = default;
+    virtual void OnRadioWorkAvailable(IRadio& radio) noexcept = 0;
+};
+
 /// <summary>Hardware-neutral bounded-packet radio contract.</summary>
 /// <remarks>
 /// Implementations transport opaque bytes only. They do not understand ESPressio primitives, application routing,
-/// authentication, serialization, or message semantics.
+/// authentication, serialization, or message semantics. Inbound processing is owned by RadioWorker: providers queue
+/// callback-driven traffic where necessary and expose that queued/hardware traffic through ProcessInbound().
 /// </remarks>
 class IRadio {
 public:
@@ -43,13 +55,20 @@ public:
         std::size_t payloadSize
     ) = 0;
 
+    /// <summary>Installs the worker-owned inbound packet receiver.</summary>
     virtual void SetReceiver(IRadioReceiver* receiver) noexcept = 0;
+
+    /// <summary>Installs the worker wake target used when asynchronous driver callbacks queue inbound work.</summary>
+    virtual void SetWorkSignal(IRadioWorkSignal* signal) noexcept = 0;
+
+    /// <summary>
+    /// Drains currently available inbound link packets and delivers them to the installed receiver.
+    /// This is an internal worker-facing operation and must not create a second scheduling or semantic layer.
+    /// </summary>
+    virtual void ProcessInbound() = 0;
 
     /// <summary>Gets the ESPressio Observable callback-subscription surface for this radio.</summary>
     virtual RadioObserverSubscriptions& Observers() noexcept = 0;
-
-    /// <summary>Allows polling-based providers to advance receive/TX work; interrupt-driven providers may no-op.</summary>
-    virtual void Poll() {}
 };
 
 } // namespace ESPressio::Radio
