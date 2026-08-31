@@ -118,18 +118,29 @@ public:
         return _dispatcher->IsObserverRegistered(observer);
     }
 
-    void NotifyStarted(IRadio& radio) { _dispatcher->NotifyStarted(radio); }
-    void NotifyStopped(IRadio& radio) { _dispatcher->NotifyStopped(radio); }
-    void NotifyPacketReceived(IRadio& radio, const RadioPacketView& packet) {
-        _dispatcher->NotifyPacketReceived(radio, packet);
+    /// <summary>Emits a supplemental observer callback without allowing subscriber failures to alter transport mechanics.</summary>
+    void NotifyStarted(IRadio& radio) noexcept {
+        try { _dispatcher->NotifyStarted(radio); } catch (...) {}
     }
+
+    /// <summary>Emits a supplemental observer callback without allowing subscriber failures to alter transport mechanics.</summary>
+    void NotifyStopped(IRadio& radio) noexcept {
+        try { _dispatcher->NotifyStopped(radio); } catch (...) {}
+    }
+
+    /// <summary>Emits a supplemental observer callback without allowing subscriber failures to alter transport mechanics.</summary>
+    void NotifyPacketReceived(IRadio& radio, const RadioPacketView& packet) noexcept {
+        try { _dispatcher->NotifyPacketReceived(radio, packet); } catch (...) {}
+    }
+
+    /// <summary>Emits a supplemental observer callback without allowing subscriber failures to alter transport mechanics.</summary>
     void NotifySendCompleted(
         IRadio& radio,
         const RadioAddress& destination,
         std::size_t payloadSize,
         const RadioSendResult& result
-    ) {
-        _dispatcher->NotifySendCompleted(radio, destination, payloadSize, result);
+    ) noexcept {
+        try { _dispatcher->NotifySendCompleted(radio, destination, payloadSize, result); } catch (...) {}
     }
 };
 
