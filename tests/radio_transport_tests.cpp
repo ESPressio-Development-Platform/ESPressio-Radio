@@ -51,7 +51,6 @@ public:
         packet.PayloadSize = size;
         packet.Flags = destination.IsBroadcast() ? RadioPacketFlag::Broadcast : RadioPacketFlag::None;
         _peer->_receiver->OnRadioPacket(*_peer, packet);
-        _peer->_observers.NotifyPacketReceived(*_peer, packet);
         if (_peer->_workSignal != nullptr) _peer->_workSignal->OnRadioWorkAvailable(*_peer);
         return complete(RadioSendResult::Accepted());
     }
@@ -64,6 +63,20 @@ private:
     IRadioWorkSignal* _workSignal = nullptr;
     RadioObserverSubscriptions _observers{};
     FakeRadio* _peer = nullptr;
+};
+
+/// Test-only synchronous ingress stand-in for RadioWorker. Production code installs RadioWorker itself.
+class TestIngress final : public IRadioReceiver {
+public:
+    explicit TestIngress(RadioTransport& transport) : _transport(transport) {}
+
+    void OnRadioPacket(IRadio& radio, const RadioPacketView& packet) override {
+        _transport.ProcessInboundPacket(radio, packet);
+        radio.Observers().NotifyPacketReceived(radio, packet);
+    }
+
+private:
+    RadioTransport& _transport;
 };
 
 class CaptureReceiver final : public IRadioTransportReceiver {
@@ -145,6 +158,8 @@ static void TestFragmentedDirectDeliveryAndObservers() {
 
     RadioTransport nodeA(1);
     RadioTransport nodeB(2);
+    TestIngress ingressA(nodeA);
+    TestIngress ingressB(nodeB);
     TransportObserver transportA;
     TransportObserver transportB;
     auto transportARegistration = nodeA.Observers().Subscribe<IRadioTransportLifecycleObserver, IRadioTransportTopologyObserver, IRadioTransportMessageObserver>(&transportA);
@@ -154,6 +169,8 @@ static void TestFragmentedDirectDeliveryAndObservers() {
     nodeB.SetReceiver(&receiver);
     assert(nodeA.AddInterface(radioA));
     assert(nodeB.AddInterface(radioB));
+    radioA.SetReceiver(&ingressA);
+    radioB.SetReceiver(&ingressB);
     assert(nodeA.SetRoute(2, radioA, radioB.LocalAddress()));
     assert(nodeB.SetRoute(1, radioB, radioA.LocalAddress()));
     assert(nodeA.Start());
@@ -206,6 +223,9 @@ static void TestCrossRadioForwardingObserver() {
     RadioTransport nodeA(10, 4);
     RadioTransport nodeB(20, 4);
     RadioTransport nodeC(30, 4);
+    TestIngress ingressA(nodeA);
+    TestIngress ingressB(nodeB);
+    TestIngress ingressC(nodeC);
     TransportObserver bridgeObserver;
     auto bridgeRegistration = nodeB.Observers().Subscribe<IRadioTransportMessageObserver>(&bridgeObserver);
     CaptureReceiver receiver;
@@ -215,6 +235,10 @@ static void TestCrossRadioForwardingObserver() {
     assert(nodeB.AddInterface(radioAB_B));
     assert(nodeB.AddInterface(radioBC_B));
     assert(nodeC.AddInterface(radioBC_C));
+    radioAB_A.SetReceiver(&ingressA);
+    radioAB_B.SetReceiver(&ingressB);
+    radioBC_B.SetReceiver(&ingressB);
+    radioBC_C.SetReceiver(&ingressC);
     assert(nodeA.SetRoute(30, radioAB_A, radioAB_B.LocalAddress()));
     assert(nodeB.SetRoute(30, radioBC_B, radioBC_C.LocalAddress()));
     assert(nodeC.SetRoute(10, radioBC_C, radioBC_B.LocalAddress()));
