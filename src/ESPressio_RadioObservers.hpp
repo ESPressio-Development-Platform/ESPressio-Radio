@@ -87,15 +87,7 @@ private:
         }
     };
 
-    // Observable deliberately requires shared ownership for safe subscription lifetime handling.
-    // Infer that ownership type exclusively from ESPressio-System's policy-aware factory so this
-    // layer neither names nor constructs a standard-library smart pointer directly.
-    using DispatcherOwner = decltype(System::Memory::MakeShared<
-        Dispatcher,
-        System::Memory::MemoryPolicy::ExternalPreferred
-    >());
-
-    DispatcherOwner _dispatcher;
+    System::Memory::SharedPtr<Dispatcher> _dispatcher;
 
 public:
     RadioObserverSubscriptions()
