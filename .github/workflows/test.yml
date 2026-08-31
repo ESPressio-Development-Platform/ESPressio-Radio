@@ -11,7 +11,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout ESPressio System working branch
+        run: git clone --depth 1 --branch feature/1-system-memory-policy https://github.com/ESPressio-Development-Platform/ESPressio-System.git deps/System
+      - name: Checkout ESPressio Observable working branch
+        run: git clone --depth 1 --branch feature/16-rtti-free-observer-registry https://github.com/ESPressio-Development-Platform/ESPressio-Observable.git deps/Observable
       - name: Build tests
-        run: g++ -std=c++17 -Wall -Wextra -Werror -Itests/stubs -Isrc tests/radio_transport_tests.cpp -o radio_transport_tests
+        run: g++ -std=c++17 -Wall -Wextra -Werror -Isrc -Ideps/System/src -Ideps/Observable/src tests/radio_transport_tests.cpp -o radio_transport_tests -pthread
       - name: Run tests
         run: ./radio_transport_tests
