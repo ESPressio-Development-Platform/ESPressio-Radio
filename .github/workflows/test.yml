@@ -29,7 +29,7 @@ jobs:
           python-version: '3.x'
       - name: Install PlatformIO
         run: pip install platformio
-      - name: Create current-working-branch worker smoke project
+      - name: Create current-working-branch worker and Event-bridge smoke project
         shell: bash
         run: |
           PROJECT="$RUNNER_TEMP/espressio-radio-worker-ci"
@@ -44,27 +44,32 @@ jobs:
           lib_ldf_mode = deep+
           lib_deps =
               https://github.com/ESPressio-Development-Platform/ESPressio-System.git#feature/1-system-memory-policy
+              https://github.com/ESPressio-Development-Platform/ESPressio-Task.git#feature/1-task-execution
               https://github.com/ESPressio-Development-Platform/ESPressio-Units.git#item_4_saturation_testing
               https://github.com/ESPressio-Development-Platform/ESPressio-Observable.git#feature/16-rtti-free-observer-registry
               https://github.com/ESPressio-Development-Platform/ESPressio-Timing.git#item_4_saturation_testing
               https://github.com/ESPressio-Development-Platform/ESPressio-Threads.git#optimisation/69-resource-footprint
+              https://github.com/ESPressio-Development-Platform/ESPressio-Event.git#item_4_saturation_testing
               https://github.com/ESPressio-Development-Platform/ESPressio-Radio.git#feature/1-radio-transport
           EOF
           cat > "$PROJECT/src/main.cpp" <<'EOF'
           #include <Arduino.h>
           #include <ESPressio_Radio.hpp>
+          #include <ESPressio_RadioEventBridge.hpp>
 
           ESPressio::Radio::RadioTransport transport(1);
           ESPressio::Radio::RadioWorker worker(transport);
+          ESPressio::Event::RadioEventBridge bridge;
 
           void setup() {
               ESPressio::Radio::RadioWorkerConfiguration configuration;
               configuration.IterationPeriodMilliseconds = 10;
               configuration.DesiredExecutionBudgetMilliseconds = 2;
               worker.Configure(configuration);
+              bridge.Subscribe(transport);
           }
 
           void loop() {}
           EOF
-      - name: Compile worker against current Working Branch APIs
+      - name: Compile worker and optional Event bridge against current Working Branch APIs
         run: pio run -d "$RUNNER_TEMP/espressio-radio-worker-ci"
