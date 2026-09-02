@@ -1,7 +1,7 @@
 {
   "name": "ESPressio-Radio",
   "description": "Hardware-agnostic packet-radio onward transport for ESPressio messages",
-  "keywords": "espressio,radio,transport,packet,routing,fragmentation,reassembly,observable,observer,event,bridge,thread,worker",
+  "keywords": "espressio,radio,transport,packet,routing,fragmentation,reassembly,observable,observer,event,bridge,thread,worker,clock,synchronization",
   "authors": {"name":"Simon J. Stuart","maintainer":true,"url":"https://espressio.org"},
   "build": {"flags":["-std=gnu++17","-DESPRESSIO_RADIO"]},
   "repository": {"type":"git","url":"https://github.com/ESPressio-Development-Platform/ESPressio-Radio.git"},
@@ -28,7 +28,7 @@
     {
       "name":"ESPressio-Timing",
       "version":"https://github.com/ESPressio-Development-Platform/ESPressio-Timing.git#main",
-      "platforms":"espressif32"
+      "platforms":"*"
     },
     {
       "name":"ESPressio-Threads",
