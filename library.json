@@ -1,0 +1,44 @@
+{
+  "name": "ESPressio-Radio",
+  "description": "Hardware-agnostic packet-radio onward transport for ESPressio messages",
+  "keywords": "espressio,radio,transport,packet,routing,fragmentation,reassembly,observable,observer,event,bridge,thread,worker",
+  "authors": {"name":"Simon J. Stuart","maintainer":true,"url":"https://espressio.org"},
+  "build": {"flags":["-std=gnu++17","-DESPRESSIO_RADIO"]},
+  "repository": {"type":"git","url":"https://github.com/ESPressio-Development-Platform/ESPressio-Radio.git"},
+  "version": "1.0.0",
+  "license": "Apache-2.0",
+  "frameworks": "*",
+  "platforms": "*",
+  "dependencies": [
+    {
+      "name":"ESPressio-System",
+      "version":"https://github.com/ESPressio-Development-Platform/ESPressio-System.git#feature/1-system-memory-policy",
+      "platforms":"*"
+    },
+    {
+      "name":"ESPressio-Units",
+      "version":"https://github.com/ESPressio-Development-Platform/ESPressio-Units.git#item_4_saturation_testing",
+      "platforms":"*"
+    },
+    {
+      "name":"ESPressio-Observable",
+      "version":"https://github.com/ESPressio-Development-Platform/ESPressio-Observable.git#feature/16-rtti-free-observer-registry",
+      "platforms":"*"
+    },
+    {
+      "name":"ESPressio-Timing",
+      "version":"https://github.com/ESPressio-Development-Platform/ESPressio-Timing.git#item_4_saturation_testing",
+      "platforms":"espressif32"
+    },
+    {
+      "name":"ESPressio-Threads",
+      "version":"https://github.com/ESPressio-Development-Platform/ESPressio-Threads.git#optimisation/69-resource-footprint",
+      "platforms":"espressif32"
+    },
+    {
+      "name":"ESPressio-Event",
+      "version":"https://github.com/ESPressio-Development-Platform/ESPressio-Event.git#item_4_saturation_testing",
+      "platforms":"espressif32"
+    }
+  ]
+}
