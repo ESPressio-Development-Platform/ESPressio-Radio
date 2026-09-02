@@ -5,3 +5,4 @@
 #include "ESPressio_IRadio.hpp"
 #include "ESPressio_RadioTransport.hpp"
 #include "ESPressio_RadioWorker.hpp"
+#include "ESPressio_RadioClockSynchronizer.hpp"
