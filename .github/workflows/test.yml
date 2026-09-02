@@ -3,7 +3,7 @@ name: Radio Tests
 on:
   push:
     branches:
-      - feature/1-radio-transport
+      - main
   pull_request:
 
 jobs:
@@ -11,14 +11,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Checkout ESPressio System working branch
+      - name: Checkout ESPressio System main
         run: git clone --depth 1 --branch main https://github.com/ESPressio-Development-Platform/ESPressio-System.git deps/System
-      - name: Checkout ESPressio Observable working branch
+      - name: Checkout ESPressio Units main
+        run: git clone --depth 1 --branch main https://github.com/ESPressio-Development-Platform/ESPressio-Units.git deps/Units
+      - name: Checkout ESPressio Observable main
         run: git clone --depth 1 --branch main https://github.com/ESPressio-Development-Platform/ESPressio-Observable.git deps/Observable
+      - name: Checkout ESPressio Timing main
+        run: git clone --depth 1 --branch main https://github.com/ESPressio-Development-Platform/ESPressio-Timing.git deps/Timing
       - name: Build transport tests
-        run: g++ -std=c++17 -Wall -Wextra -Werror -Isrc -Ideps/System/src -Ideps/Observable/src tests/radio_transport_tests.cpp -o radio_transport_tests -pthread
+        run: g++ -std=c++17 -Wall -Wextra -Werror -Isrc -Ideps/System/src -Ideps/Units/src -Ideps/Observable/src tests/radio_transport_tests.cpp -o radio_transport_tests -pthread
       - name: Run transport tests
         run: ./radio_transport_tests
+      - name: Build clock synchronization tests
+        run: g++ -std=c++17 -Wall -Wextra -Werror -Isrc -Ideps/System/src -Ideps/Units/src -Ideps/Observable/src -Ideps/Timing/src tests/radio_clock_synchronizer_tests.cpp -o radio_clock_synchronizer_tests -pthread
+      - name: Run clock synchronization tests
+        run: ./radio_clock_synchronizer_tests
 
   esp32-worker:
     runs-on: ubuntu-latest
@@ -29,7 +37,7 @@ jobs:
           python-version: '3.x'
       - name: Install PlatformIO
         run: pip install platformio
-      - name: Create current-working-branch worker and Event-bridge smoke project
+      - name: Create main-branch worker, Event-bridge and clock-sync smoke project
         shell: bash
         run: |
           PROJECT="$RUNNER_TEMP/espressio-radio-worker-ci"
@@ -57,9 +65,42 @@ jobs:
           #include <ESPressio_Radio.hpp>
           #include <ESPressio_RadioEventBridge.hpp>
 
+          class DummyRadio final : public ESPressio::Radio::IRadio {
+          public:
+              bool Start() override { started = true; return true; }
+              void Stop() noexcept override { started = false; }
+              bool IsStarted() const noexcept override { return started; }
+              ESPressio::Radio::RadioCapabilities Capabilities() const noexcept override {
+                  return {
+                      ESPressio::Radio::RadioCapability::HardwareAddressing |
+                      ESPressio::Radio::RadioCapability::ReceiveTimestamp,
+                      32,
+                      1
+                  };
+              }
+              ESPressio::Radio::RadioAddress LocalAddress() const noexcept override {
+                  const uint8_t value = 1;
+                  return ESPressio::Radio::RadioAddress::FromBytes(&value, 1);
+              }
+              ESPressio::Radio::RadioSendResult Send(
+                  const ESPressio::Radio::RadioAddress&,
+                  const uint8_t*,
+                  std::size_t
+              ) override { return ESPressio::Radio::RadioSendResult::Accepted(); }
+              void SetReceiver(ESPressio::Radio::IRadioReceiver*) noexcept override {}
+              void SetWorkSignal(ESPressio::Radio::IRadioWorkSignal*) noexcept override {}
+              void DrainInbound() override {}
+              ESPressio::Radio::RadioObserverSubscriptions& Observers() noexcept override { return observers; }
+          private:
+              bool started = false;
+              ESPressio::Radio::RadioObserverSubscriptions observers;
+          };
+
           ESPressio::Radio::RadioTransport transport(1);
           ESPressio::Radio::RadioWorker worker(transport);
           ESPressio::Event::RadioEventBridge bridge;
+          DummyRadio dummyRadio;
+          ESPressio::Radio::RadioClockSynchronizer clockSynchronizer(dummyRadio);
 
           void setup() {
               ESPressio::Radio::RadioWorkerConfiguration configuration;
@@ -67,9 +108,14 @@ jobs:
               configuration.DesiredExecutionBudgetMilliseconds = 2;
               worker.Configure(configuration);
               bridge.Subscribe(transport);
+              dummyRadio.Start();
+              ESPressio::Radio::RadioClockSynchronizationConfig sync;
+              sync.Mode = ESPressio::Radio::RadioClockSynchronizationMode::Reference;
+              sync.RequireReceiveTimestamp = true;
+              (void)clockSynchronizer.Initialize(sync);
           }
 
           void loop() {}
           EOF
-      - name: Compile worker and optional Event bridge against current Working Branch APIs
+      - name: Compile worker, optional Event bridge and radio clock synchronizer against main APIs
         run: pio run -d "$RUNNER_TEMP/espressio-radio-worker-ci"
