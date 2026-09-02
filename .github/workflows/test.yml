@@ -12,9 +12,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Checkout ESPressio System working branch
-        run: git clone --depth 1 --branch feature/1-system-memory-policy https://github.com/ESPressio-Development-Platform/ESPressio-System.git deps/System
+        run: git clone --depth 1 --branch main https://github.com/ESPressio-Development-Platform/ESPressio-System.git deps/System
       - name: Checkout ESPressio Observable working branch
-        run: git clone --depth 1 --branch feature/16-rtti-free-observer-registry https://github.com/ESPressio-Development-Platform/ESPressio-Observable.git deps/Observable
+        run: git clone --depth 1 --branch main https://github.com/ESPressio-Development-Platform/ESPressio-Observable.git deps/Observable
       - name: Build transport tests
         run: g++ -std=c++17 -Wall -Wextra -Werror -Isrc -Ideps/System/src -Ideps/Observable/src tests/radio_transport_tests.cpp -o radio_transport_tests -pthread
       - name: Run transport tests
@@ -43,14 +43,14 @@ jobs:
           build_unflags = -std=gnu++11
           lib_ldf_mode = deep+
           lib_deps =
-              https://github.com/ESPressio-Development-Platform/ESPressio-System.git#feature/1-system-memory-policy
-              https://github.com/ESPressio-Development-Platform/ESPressio-Task.git#feature/1-task-execution
-              https://github.com/ESPressio-Development-Platform/ESPressio-Units.git#item_4_saturation_testing
-              https://github.com/ESPressio-Development-Platform/ESPressio-Observable.git#feature/16-rtti-free-observer-registry
-              https://github.com/ESPressio-Development-Platform/ESPressio-Timing.git#item_4_saturation_testing
-              https://github.com/ESPressio-Development-Platform/ESPressio-Threads.git#optimisation/69-resource-footprint
-              https://github.com/ESPressio-Development-Platform/ESPressio-Event.git#item_4_saturation_testing
-              https://github.com/ESPressio-Development-Platform/ESPressio-Radio.git#feature/1-radio-transport
+              https://github.com/ESPressio-Development-Platform/ESPressio-System.git#main
+              https://github.com/ESPressio-Development-Platform/ESPressio-Task.git#main
+              https://github.com/ESPressio-Development-Platform/ESPressio-Units.git#main
+              https://github.com/ESPressio-Development-Platform/ESPressio-Observable.git#main
+              https://github.com/ESPressio-Development-Platform/ESPressio-Timing.git#main
+              https://github.com/ESPressio-Development-Platform/ESPressio-Threads.git#main
+              https://github.com/ESPressio-Development-Platform/ESPressio-Event.git#main
+              https://github.com/ESPressio-Development-Platform/ESPressio-Radio.git#main
           EOF
           cat > "$PROJECT/src/main.cpp" <<'EOF'
           #include <Arduino.h>
