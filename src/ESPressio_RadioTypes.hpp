@@ -98,6 +98,12 @@ constexpr RadioPacketFlag operator|(RadioPacketFlag a, RadioPacketFlag b) noexce
 }
 
 /// <summary>Borrowed packet view delivered synchronously by a concrete radio provider.</summary>
+/// <remarks>
+/// ReceiveTimestampNanoseconds is zero when unavailable. Providers advertising RadioCapability::ReceiveTimestamp must
+/// capture it as close to physical reception as their driver permits and express it in the active process-wide
+/// System::Clock::Monotonic() nanosecond domain. This common domain allows transport-neutral consumers such as Radio clock
+/// synchronization to recover the corresponding System Clock timestamp without provider-specific timing knowledge.
+/// </remarks>
 struct RadioPacketView {
     RadioAddress Source{};
     RadioAddress Destination{};
