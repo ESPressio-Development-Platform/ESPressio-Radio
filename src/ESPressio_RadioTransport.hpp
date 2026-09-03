@@ -73,6 +73,13 @@ struct RadioTransportSendResult {
     }
 };
 
+/// <summary>Reason one Radio-owned peer handle ceased to be current.</summary>
+enum class RadioPeerInvalidationReason : std::uint8_t {
+    Explicit,
+    InterfaceRemoved,
+    TransportStopped
+};
+
 /// <summary>Observes RadioTransport lifecycle transitions.</summary>
 class IRadioTransportLifecycleObserver : public virtual Observable::IObserver {
 public:
@@ -87,6 +94,30 @@ public:
     virtual ~IRadioTransportInterfaceObserver() = default;
     virtual void OnRadioInterfaceAdded(RadioTransport& transport, IRadio& radio) = 0;
     virtual void OnRadioInterfaceRemoved(RadioTransport& transport, IRadio& radio) = 0;
+};
+
+/// <summary>Observes generation-safe Radio peer lifecycle transitions.</summary>
+/// <remarks>
+/// Peer observations are link-local only and grant no Mesh/device identity authority. Invalidation is emitted when
+/// an exact handle is explicitly removed, when its owning Radio interface is removed, or when RadioTransport stops.
+/// Observer callbacks are informational and must not structurally mutate RadioTransport while notification is active.
+/// </remarks>
+class IRadioTransportPeerObserver : public virtual Observable::IObserver {
+public:
+    virtual ~IRadioTransportPeerObserver() = default;
+    virtual void OnRadioPeerObserved(
+        RadioTransport& transport,
+        IRadio& radio,
+        RadioPeerHandle peer,
+        const RadioAddress& address
+    ) = 0;
+    virtual void OnRadioPeerInvalidated(
+        RadioTransport& transport,
+        IRadio& radio,
+        RadioPeerHandle peer,
+        const RadioAddress& address,
+        RadioPeerInvalidationReason reason
+    ) = 0;
 };
 
 /// <summary>Observes complete logical-transfer send and receive operations.</summary>
@@ -134,6 +165,33 @@ private:
             ExecuteNotification([&](NotificationContext& n) {
                 n.WithObservers<IRadioTransportInterfaceObserver>(
                     [&](IRadioTransportInterfaceObserver* o) { o->OnRadioInterfaceRemoved(transport, radio); });
+            });
+        }
+        void PeerObserved(
+            RadioTransport& transport,
+            IRadio& radio,
+            RadioPeerHandle peer,
+            const RadioAddress& address
+        ) {
+            ExecuteNotification([&](NotificationContext& n) {
+                n.WithObservers<IRadioTransportPeerObserver>(
+                    [&](IRadioTransportPeerObserver* o) {
+                        o->OnRadioPeerObserved(transport, radio, peer, address);
+                    });
+            });
+        }
+        void PeerInvalidated(
+            RadioTransport& transport,
+            IRadio& radio,
+            RadioPeerHandle peer,
+            const RadioAddress& address,
+            RadioPeerInvalidationReason reason
+        ) {
+            ExecuteNotification([&](NotificationContext& n) {
+                n.WithObservers<IRadioTransportPeerObserver>(
+                    [&](IRadioTransportPeerObserver* o) {
+                        o->OnRadioPeerInvalidated(transport, radio, peer, address, reason);
+                    });
             });
         }
         void SendCompleted(
@@ -184,6 +242,18 @@ public:
     void NotifyStopped(RadioTransport& t) noexcept { try { _dispatcher->Stopped(t); } catch (...) {} }
     void NotifyInterfaceAdded(RadioTransport& t, IRadio& r) noexcept { try { _dispatcher->InterfaceAdded(t, r); } catch (...) {} }
     void NotifyInterfaceRemoved(RadioTransport& t, IRadio& r) noexcept { try { _dispatcher->InterfaceRemoved(t, r); } catch (...) {} }
+    void NotifyPeerObserved(RadioTransport& t, IRadio& r, RadioPeerHandle p, const RadioAddress& a) noexcept {
+        try { _dispatcher->PeerObserved(t, r, p, a); } catch (...) {}
+    }
+    void NotifyPeerInvalidated(
+        RadioTransport& t,
+        IRadio& r,
+        RadioPeerHandle p,
+        const RadioAddress& a,
+        RadioPeerInvalidationReason reason
+    ) noexcept {
+        try { _dispatcher->PeerInvalidated(t, r, p, a, reason); } catch (...) {}
+    }
     void NotifySendCompleted(RadioTransport& t, IRadio& r, const RadioAddress& d, std::size_t s, const RadioTransportSendResult& result) noexcept {
         try { _dispatcher->SendCompleted(t, r, d, s, result); } catch (...) {}
     }
@@ -411,6 +481,17 @@ public:
     bool RemoveInterface(IRadio& radio) noexcept {
         auto* record = FindInterface(radio);
         if (record == nullptr) return false;
+        _peers.ForEach([&](RadioPeerHandle peer, const RadioPeerBinding& binding) {
+            if (binding.Interface == &radio) {
+                _observers.NotifyPeerInvalidated(
+                    *this,
+                    radio,
+                    peer,
+                    binding.Address,
+                    RadioPeerInvalidationReason::InterfaceRemoved
+                );
+            }
+        });
         record->Radio = nullptr;
         _peers.InvalidateInterface(radio);
         for (auto& reassembly : _reassemblies) if (reassembly.Radio == &radio) reassembly.Reset();
@@ -440,6 +521,17 @@ public:
     void Stop() noexcept {
         if (!_started) return;
         _started = false;
+        _peers.ForEach([&](RadioPeerHandle peer, const RadioPeerBinding& binding) {
+            if (binding.Interface != nullptr) {
+                _observers.NotifyPeerInvalidated(
+                    *this,
+                    *binding.Interface,
+                    peer,
+                    binding.Address,
+                    RadioPeerInvalidationReason::TransportStopped
+                );
+            }
+        });
         _peers.Clear();
         for (auto& reassembly : _reassemblies) reassembly.Reset();
         for (auto& recent : _recent) recent = {};
@@ -454,6 +546,23 @@ public:
     /// <summary>Gets the Radio-owned peer registry used by this transport for direct-peer resolution.</summary>
     RadioPeerRegistry<>& Peers() noexcept { return _peers; }
     const RadioPeerRegistry<>& Peers() const noexcept { return _peers; }
+
+    /// <summary>Invalidates one exact current Radio peer and emits its lifecycle notification.</summary>
+    bool InvalidatePeer(RadioPeerHandle peer) noexcept {
+        const auto* binding = _peers.Resolve(peer);
+        if (binding == nullptr || !binding->IsValid()) return false;
+        IRadio* radio = binding->Interface;
+        const RadioAddress address = binding->Address;
+        if (!_peers.Invalidate(peer)) return false;
+        _observers.NotifyPeerInvalidated(
+            *this,
+            *radio,
+            peer,
+            address,
+            RadioPeerInvalidationReason::Explicit
+        );
+        return true;
+    }
 
     /// <summary>
     /// Sends one complete immutable opaque unicast transfer to a current Radio-owned peer handle.
@@ -603,6 +712,9 @@ public:
             // Do not commit recent-transfer suppression: a later retry may succeed after peer resources become available.
             record->Reset();
             return;
+        }
+        if (peerResult == RadioPeerObserveResult::Observed) {
+            _observers.NotifyPeerObserved(*this, radio, sourcePeer, record->Source);
         }
 
         RadioTransportMessageView message;
