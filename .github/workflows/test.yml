@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - structural_realignment_propagation_ESPressio-Mesh
   pull_request:
 
 jobs:
@@ -11,8 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Checkout ESPressio System structural_realignment
-        run: git clone --depth 1 --branch structural_realignment https://github.com/ESPressio-Development-Platform/ESPressio-System.git deps/System
+      - name: Checkout ESPressio System propagation branch
+        run: git clone --depth 1 --branch structural_realignment_propagation_ESPressio-Mesh https://github.com/ESPressio-Development-Platform/ESPressio-System.git deps/System
       - name: Checkout ESPressio Observable structural_realignment
         run: git clone --depth 1 --branch structural_realignment https://github.com/ESPressio-Development-Platform/ESPressio-Observable.git deps/Observable
       - name: Build transport tests
@@ -33,7 +34,7 @@ jobs:
           python-version: '3.x'
       - name: Install PlatformIO
         run: pip install platformio
-      - name: Create structural-realignment worker, Event-bridge and clock-sync smoke project
+      - name: Create propagation worker, Event-bridge and clock-sync smoke project
         shell: bash
         run: |
           PROJECT="$RUNNER_TEMP/espressio-radio-worker-ci"
@@ -47,14 +48,14 @@ jobs:
           build_unflags = -std=gnu++11
           lib_ldf_mode = deep+
           lib_deps =
-              https://github.com/ESPressio-Development-Platform/ESPressio-System.git#structural_realignment
+              https://github.com/ESPressio-Development-Platform/ESPressio-System.git#structural_realignment_propagation_ESPressio-Mesh
               https://github.com/ESPressio-Development-Platform/ESPressio-Task.git#structural_realignment
               https://github.com/ESPressio-Development-Platform/ESPressio-Units.git#structural_realignment
               https://github.com/ESPressio-Development-Platform/ESPressio-Observable.git#structural_realignment
               https://github.com/ESPressio-Development-Platform/ESPressio-Timing.git#structural_realignment
               https://github.com/ESPressio-Development-Platform/ESPressio-Threads.git#structural_realignment
               https://github.com/ESPressio-Development-Platform/ESPressio-Event.git#structural_realignment
-              https://github.com/ESPressio-Development-Platform/ESPressio-Radio.git#structural_realignment
+              https://github.com/ESPressio-Development-Platform/ESPressio-Radio.git#structural_realignment_propagation_ESPressio-Mesh
           EOF
           cat > "$PROJECT/src/main.cpp" <<'EOF'
           #include <Arduino.h>
@@ -71,7 +72,8 @@ jobs:
                       ESPressio::Radio::RadioCapability::HardwareAddressing |
                       ESPressio::Radio::RadioCapability::ReceiveTimestamp,
                       32,
-                      1
+                      1,
+                      4096
                   };
               }
               ESPressio::Radio::RadioAddress LocalAddress() const noexcept override {
@@ -92,7 +94,7 @@ jobs:
               ESPressio::Radio::RadioObserverSubscriptions observers;
           };
 
-          ESPressio::Radio::RadioTransport transport(1);
+          ESPressio::Radio::RadioTransport transport;
           ESPressio::Radio::RadioWorker worker(transport);
           ESPressio::Event::RadioEventBridge bridge;
           DummyRadio dummyRadio;
@@ -103,8 +105,9 @@ jobs:
               configuration.IterationPeriodMilliseconds = 10;
               configuration.DesiredExecutionBudgetMilliseconds = 2;
               worker.Configure(configuration);
+              worker.AddInterface(dummyRadio);
               bridge.Subscribe(transport);
-              dummyRadio.Start();
+              transport.Start();
               ESPressio::Radio::RadioClockSynchronizationConfig sync;
               sync.Mode = ESPressio::Radio::RadioClockSynchronizationMode::Reference;
               sync.RequireReceiveTimestamp = true;
@@ -113,5 +116,5 @@ jobs:
 
           void loop() {}
           EOF
-      - name: Compile worker, optional Event bridge and radio clock synchronizer against structural_realignment APIs
+      - name: Compile worker, optional Event bridge and radio clock synchronizer against propagation APIs
         run: pio run -d "$RUNNER_TEMP/espressio-radio-worker-ci"
