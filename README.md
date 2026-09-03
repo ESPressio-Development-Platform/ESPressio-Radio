@@ -1,18 +1,18 @@
 # ESPressio-Radio
 
-`ESPressio-Radio` provides hardware-agnostic packet-radio **onward transport** for ESPressio.
+`ESPressio-Radio` provides the hardware-agnostic physical/link transport boundary used by ESPressio.
 
-Its responsibility is intentionally narrow: it carries opaque messages between logical ESPressio nodes over one or more packet-radio interfaces. It does **not** implement Command, Event, State, or other primitive semantics, and it does **not** establish message authenticity. Authentication/encryption policy belongs to ESPressio Security and primitive meaning belongs to the primitive-owning libraries.
+Its responsibility is deliberately narrow: concrete `IRadio` implementations move bounded opaque physical packets to and from `RadioAddress` endpoints, while `RadioTransport` provides bounded **hop-local logical transfer** by fragmenting/reassembling complete opaque byte sequences over one explicitly selected radio interface and next-hop address. Radio owns no Mesh membership, topology, route selection, forwarding policy, device identity, authentication, Command/Event/State semantics, or application protocol meaning.
 
 ## Responsibility boundary
 
 Outbound:
 
 ```text
-ESPressio primitive / other message
-        -> authentication / security owner
-        -> ESPressio-Radio onward transport
-        -> IRadio concrete
+higher layer (for example ESPressio-Mesh)
+        -> selects one IRadio + next-hop RadioAddress
+        -> RadioTransport bounded logical transfer
+        -> IRadio physical/link send
         -> RF medium
 ```
 
@@ -22,147 +22,134 @@ Inbound:
 RF medium
         -> IRadio concrete bounded RX storage / hardware FIFO
         -> RadioWorker (PrecisionThread)
-        -> ESPressio-Radio onward transport
-        -> authentication / security owner
-        -> primitive/message owner
+        -> RadioTransport bounded reassembly
+        -> higher-layer receiver
 ```
 
-A concrete `IRadio` therefore knows only how to start/stop its radio technology, report its packet capabilities, send bounded opaque bytes to a link-layer address, and expose available inbound opaque packets to the Radio worker. It must not parse ESPressio primitives.
+A concrete `IRadio` knows only how to start/stop its technology, report its capabilities, expose its local RadioAddress, send bounded opaque physical/link bytes to another RadioAddress, and drain inbound physical packets into the worker-owned receiver. It must not parse ESPressio Mesh or conceptual primitives.
+
+## RadioTransport: direct-link logical transfer only
+
+`RadioTransport` does **not** contain a logical-node routing table and does **not** forward traffic. Every outbound call names the exact radio interface and next-hop `RadioAddress` chosen by the caller:
+
+```cpp
+transport.Send(radio, peerRadioAddress, bytes, size);
+```
+
+The service owns only:
+
+- bounded hop-local fragmentation and reassembly;
+- one finite `MaximumLogicalTransferSize(radio)` per interface;
+- a bounded set of registered radio interfaces;
+- bounded incomplete-reassembly state;
+- bounded recently-completed transfer suppression; and
+- delivery of one complete opaque logical byte sequence to `IRadioTransportReceiver`.
+
+This is the architectural boundary required by ESPressio-Mesh: Mesh owns end-to-end routing, retries, forwarding, identities, hop limits and delivery semantics; Radio executes only the selected direct link.
+
+The default generic logical-transfer ceiling is 4096 bytes and is compile-time bounded by `ESPRESSIO_RADIO_MAX_LOGICAL_TRANSFER_BYTES`. A concrete provider can advertise a smaller `RadioCapabilities::MaximumLogicalTransferBytes`. The effective capability is also constrained by its physical MTU and the maximum 255-fragment Radio transfer framing.
+
+Each RadioTransport fragment carries the sending `RadioAddress` inside the Radio-owned framing. This is intentional: technologies such as nRF24 do not expose the transmitter address when receiving a packet. When a concrete driver *does* provide `RadioPacketView::Source`, RadioTransport verifies that it agrees with the framed Radio source. This link endpoint remains strictly separate from `System::DeviceIdentifier` and every Mesh identity.
 
 ## RadioWorker
 
-Inbound processing is owned by `RadioWorker`, which derives from ESPressio `PrecisionThread` using the same scheduling architecture as other ESPressio workers.
+Inbound processing is owned by `RadioWorker`, which derives from ESPressio `PrecisionThread`.
 
-`RadioWorker` deliberately does only this:
+`RadioWorker` does only three things:
 
-1. service attached `IRadio` providers for available inbound link packets;
-2. advance each packet into `RadioTransport`;
-3. allow `RadioTransport` to reassemble/forward or hand a locally addressed opaque message to its configured receiver.
+1. service attached `IRadio` providers for available physical/link packets;
+2. advance each packet into `RadioTransport`; and
+3. notify supplemental physical-packet observers after RadioTransport has consumed the borrowed packet view.
 
-It does **not** authenticate/decrypt messages and it does **not** inspect Command, Event, State, or any future Foundation Type.
+It does not authenticate/decrypt messages, resolve routes, forward Mesh traffic, or inspect Command, Event, State or another conceptual primitive family.
 
-Callback-driven providers such as ESP32 raw 802.11 and ESP-NOW copy accepted inbound packet data into bounded provider-owned queues and invoke only `IRadioWorkSignal::OnRadioWorkAvailable()`. That signal calls `PrecisionThread::Bump()`; parsing, routing, observer notification and onward delivery are deferred to the Radio worker thread. Providers such as nRF24 that may not have an IRQ integration are serviced by the worker's normal bounded iteration cadence.
+Callback-driven providers such as ESP32 raw 802.11 copy accepted inbound packet data into bounded provider-owned queues and invoke only `IRadioWorkSignal::OnRadioWorkAvailable()`. That signal wakes the PrecisionThread; parsing/reassembly and observer notification therefore occur outside the hardware/driver callback. Providers without an asynchronous wake path may be serviced by the worker's bounded iteration cadence.
 
-There is intentionally no public `RadioTransport::Poll()` path. `RadioTransport::AddInterface()` records transport topology only and does not install itself as a radio receiver. `RadioWorker::AddInterface()` owns the production inbound binding and installs itself as the provider receiver/work signal.
+`RadioWorker::AddInterface()` registers the interface with RadioTransport and installs the worker as its inbound receiver/work signal. `RadioTransport::AddInterface()` itself records only the bounded Radio-layer registration; it does not install a competing receive path.
 
-`PrecisionThread` is used rather than `EventThread` because radio work availability is scheduling state, not a Foundation Event. This keeps the Radio worker unaware of ESPressio Event payload types while retaining the common Threads cadence/rate-control and lifecycle observation model.
+## Physical and logical capabilities
 
-`RadioWorkerConfiguration` exposes:
+`RadioCapabilities` distinguishes the physical packet ceiling from the complete logical-transfer ceiling:
 
-- `IterationPeriodMilliseconds` — maximum idle interval between inbound service passes;
-- `DesiredExecutionBudgetMilliseconds` — desired `PrecisionThread` execution budget/rate-control target.
+- `MaximumPayloadBytes` — maximum opaque bytes accepted by one concrete `IRadio::Send()` operation;
+- `AddressBytes` — meaningful RadioAddress width for that technology;
+- `MaximumLogicalTransferBytes` — optional concrete lower cap on complete RadioTransport transfers; zero means the generic bounded RadioTransport cap applies.
 
-`RadioWorker` inherits ESPressio Threads lifecycle and iteration observation, so it intentionally does not duplicate those callbacks with a second worker-specific observer system.
+`RadioAddress` is opaque technology-specific link addressing. It is never a permanent device identifier, authentication claim, Mesh node identity or route authority.
 
-## Portable transport
+## Precision clock exchange
 
-`RadioTransport` sits above one or more `IRadio` implementations and provides only mechanics required to move an already-addressed opaque message onward:
-
-- logical node addressing;
-- radio-interface and next-hop route selection;
-- bounded fragmentation/reassembly across different radio MTUs;
-- duplicate suppression;
-- hop-limit enforcement; and
-- heterogeneous cross-radio forwarding.
-
-The payload is opaque. `RadioChannel` is an 8-bit transport discriminator for an upstream owner; Radio does not assign semantic meaning to a channel.
-
-For example, a node can receive a logical message over an ESP32 raw 802.11 provider and forward it over an nRF24 provider without either concrete understanding the carried message.
+`RadioClockSynchronizer` remains a separate link-local precision mechanism operating directly over `IRadio`, intentionally bypassing ordinary RadioTransport fragmentation/reassembly. This preserves the T1/T2/T3/T4 timestamp boundary and its uncertainty characteristics. Timing owns clock mathematics/discipline; Radio owns only direct-link timestamp mechanics and transport.
 
 ## Observer callback subscriptions
 
-Radio integrates the typed, RTTI-free ESPressio Observable callback-subscription model without changing transport ownership.
+Radio integrates the typed, RTTI-free ESPressio Observable subscription model without changing ownership.
 
-The distinction is deliberate:
+Concrete radios expose:
 
-- the `RadioWorker` / `IRadioReceiver` path remains the single inbound ownership path used to move link packets into `RadioTransport`;
-- `RadioTransport::SetReceiver()` remains the single delivery hook for complete locally addressed logical messages moving onward to Security/authentication;
-- `Observers().Subscribe<...>()` provides supplemental one-to-many observation for telemetry, diagnostics, application awareness, and composition with other ESPressio components.
+- `IRadioLifecycleObserver` — successful start/stop transitions;
+- `IRadioPacketObserver` — physical/link packets after the worker has advanced them into RadioTransport;
+- `IRadioSendObserver` — synchronous concrete-radio send completion/result.
 
-Concrete radios expose these observer interfaces:
+`RadioTransport` exposes:
 
-- `IRadioLifecycleObserver` — successful radio start/stop transitions;
-- `IRadioPacketObserver` — complete link-layer packets after the worker has advanced them into RadioTransport;
-- `IRadioSendObserver` — synchronous radio send completion/result.
+- `IRadioTransportLifecycleObserver` — logical-transfer service start/stop;
+- `IRadioTransportInterfaceObserver` — interface registration/removal;
+- `IRadioTransportMessageObserver` — complete logical-transfer send and receive observations.
 
-`RadioTransport` exposes these observer interfaces:
+The `IRadioReceiver` → `RadioWorker` → `RadioTransport` path remains the single inbound ownership path. `RadioTransport::SetReceiver()` remains the single complete-transfer delivery path. Observers are supplemental telemetry/composition surfaces only.
 
-- `IRadioTransportLifecycleObserver` — successful transport start/stop transitions;
-- `IRadioTransportTopologyObserver` — interface configuration, route configuration, and route removal;
-- `IRadioTransportMessageObserver` — public logical-message sends, completed local logical-message delivery, and heterogeneous onward forwarding.
-
-Subscriptions return `Observable::ObserverHandlePtr`; retaining the handle retains the registration and destroying/resetting the handle unregisters it through the normal ESPressio Observable RAII mechanism. One observer may subscribe to several compatible observer interfaces in one registration:
-
-```cpp
-class Diagnostics final :
-    public ESPressio::Radio::IRadioLifecycleObserver,
-    public ESPressio::Radio::IRadioSendObserver {
-public:
-    void OnRadioStarted(ESPressio::Radio::IRadio&) override {}
-    void OnRadioStopped(ESPressio::Radio::IRadio&) override {}
-
-    void OnRadioSendCompleted(
-        ESPressio::Radio::IRadio&,
-        const ESPressio::Radio::RadioAddress&,
-        std::size_t,
-        const ESPressio::Radio::RadioSendResult&
-    ) override {}
-};
-
-Diagnostics diagnostics;
-auto subscription = radio.Observers().Subscribe<
-    ESPressio::Radio::IRadioLifecycleObserver,
-    ESPressio::Radio::IRadioSendObserver
->(&diagnostics);
-```
-
-Observer callbacks are synchronous. Packet/message payload views are borrowed and are valid only for the duration of the callback. Supplemental observer notification is exception-isolated at the Radio boundary: an observer failure cannot interrupt the underlying receiver/forwarding path or make a `noexcept` radio shutdown terminate the process.
+Observer callbacks are synchronous. Borrowed packet/transfer payload views are valid only for the duration of the callback. Optional asynchronous Event conversion is provided by `RadioEventBridge`; because Event delivery outlives the callback, that bridge takes one required owned payload snapshot using ESPressio-System memory policy.
 
 ## Concrete providers
 
-The hardware-neutral interfaces live here. Concrete implementations belong with the hardware/protocol integration they represent:
+The hardware-neutral interfaces live here. Concrete implementations belong with the technology/platform that owns them:
 
-- `ESPressio-ESP32`: ESP32 integrated Wi-Fi raw IEEE 802.11 provider;
-- `ESPressio-ESP-Now`: ESP-NOW provider over the same `IRadio` contract;
-- `ESPressio-NRF24`: nRF24L01/nRF24L01+ provider;
-- future LoRa/sub-GHz/802.15.4 providers can implement the same contract without changing `RadioTransport` or `RadioWorker`.
+- `ESPressio-ESP32` — ESP32 integrated raw IEEE 802.11 radio;
+- `ESPressio-ESP-Now` — ESP-NOW concrete where used as a Radio implementation;
+- `ESPressio-NRF24` — nRF24L01/nRF24L01+ concrete;
+- future LoRa/sub-GHz/802.15.4 providers may implement the same contract.
+
+Platform-global resource coordination stays with the platform concrete. In particular, ESP32 raw 802.11 and ordinary Wi-Fi share the same physical Wi-Fi PHY; shared channel/power-state ownership therefore belongs in `ESPressio-ESP32`, not in this portable Radio layer.
 
 ## Minimal usage
 
 ```cpp
 #include <ESPressio_Radio.hpp>
 
-ESPressio::Radio::RadioTransport transport(1); // logical local node ID
+ESPressio::Radio::RadioTransport transport;
 ESPressio::Radio::RadioWorker worker(transport);
 
-// A concrete provider is supplied by another ESPressio library.
 worker.AddInterface(radio);
-transport.SetRoute(2, radio, peerRadioAddress);
-
-// Complete locally addressed messages leave Radio here and enter the
-// Security/authentication stage. Radio does not interpret the payload.
-transport.SetReceiver(&authenticatedMessageIngress);
+transport.SetReceiver(&higherLayerIngress);
 
 transport.Start();
 worker.Initialize();
 worker.Start();
 
 const uint8_t bytes[] = {1, 2, 3, 4};
-transport.Send(2, 7, bytes, sizeof(bytes));
+transport.Send(radio, peerRadioAddress, bytes, sizeof(bytes));
 ```
 
-The receiver registered with `RadioTransport::SetReceiver()` receives a complete `RadioTransportMessageView`. That receiver is the boundary back into Security/authentication and only afterwards into primitive-specific transport handling; Observer subscriptions remain supplemental and do not take over this responsibility.
+The registered receiver gets a complete `RadioTransportMessageView` containing the source/destination Radio endpoints, Radio-local transfer identifier, flags and borrowed complete payload. A higher layer such as ESPressio-Mesh then applies authentication, membership, routing/delivery and primitive-family semantics according to its own contracts.
 
 ## Memory behaviour
 
-The fixed interface, route, recent-message, and reassembly registries avoid unbounded registry allocation. Reassembly payload storage uses `System::Memory::ByteVector<ExternalPreferred>` so its dynamic storage is routed through the active ESPressio-System memory provider.
+All retained RadioTransport cardinalities are bounded. The default compile-time controls are:
 
-The Observable implementation requires shared ownership for safe subscription lifetime handling. Radio therefore obtains dispatcher ownership **only** through `System::Memory::MakeShared<..., ExternalPreferred>()`; Radio does not directly name `std::shared_ptr`, call `std::make_shared`, or perform raw owning allocation. This keeps the ownership requirement behind ESPressio-System while allowing the installed platform provider, such as ESPressio-ESP32, to decide the actual memory region.
+- `ESPRESSIO_RADIO_MAX_INTERFACES = 4`;
+- `ESPRESSIO_RADIO_MAX_REASSEMBLIES = 4`;
+- `ESPRESSIO_RADIO_MAX_RECENT_TRANSFERS = 32`;
+- `ESPRESSIO_RADIO_MAX_LOGICAL_TRANSFER_BYTES = 4096`.
 
-Callback-driven concrete providers use bounded inline RX queues and do not allocate while running inside radio-driver callbacks. The queue depth remains concrete-specific and compile-time configurable.
+Each active reassembly may own at most one logical-transfer buffer up to the effective interface maximum. Reassembly payload storage uses `System::Memory::ByteVector<ExternalPreferred>`, so the installed ESPressio-System provider controls its actual memory region. The 256-fragment receipt bitmap is fixed at 32 bytes per reassembly slot.
 
-The default RadioTransport bounds are configurable at compile time with `ESPRESSIO_RADIO_MAX_INTERFACES`, `ESPRESSIO_RADIO_MAX_ROUTES`, `ESPRESSIO_RADIO_MAX_REASSEMBLIES`, `ESPRESSIO_RADIO_MAX_RECENT_MESSAGES`, and `ESPRESSIO_RADIO_MAX_MESSAGE_BYTES`.
+Observable dispatcher ownership is obtained through `System::Memory::MakeShared<..., ExternalPreferred>()`; Radio does not bypass ESPressio-System with local platform allocation policy.
+
+Concrete callback-driven providers are separately responsible for finite bounded RX storage and for documenting their physical queue/pool costs.
 
 ## Validation
 
-Native tests exercise fragmentation/reassembly, heterogeneous cross-radio forwarding with different link MTUs, typed one-to-many Observer callbacks, lifecycle/topology/message observations, and RAII subscription removal. The transport tests use a synchronous test-only ingress shim so they exercise the same `ProcessInboundPacket()` boundary that production `RadioWorker` owns. ESP32 PlatformIO smoke validation additionally compiles the `RadioWorker`/raw-802.11 provider integration against the current ESPressio System, Observable, and Threads working branches.
+Native tests exercise direct-link fragmentation/reassembly at small MTUs, provider-specific logical-transfer bounds, typed one-to-many Observable callbacks, lifecycle/interface/message observation and RAII unsubscription. Clock synchronization protocol tests validate the separate precision link path. ESP32 PlatformIO smoke validation compiles RadioWorker, optional Radio→Event integration and clock synchronization against the coordinated structural-realignment branches.
+
+During the Mesh implementation tranche, participating dependencies are pinned to their matching `structural_realignment_propagation_ESPressio-Mesh` branches until reintegration.
