@@ -195,23 +195,27 @@ public:
 /// opaque bytes over a caller-selected Radio interface and next-hop RadioAddress. It deliberately owns no logical-node
 /// routing table, no forwarding policy, no Mesh hop limit and no conceptual primitive semantics. Higher layers such as
 /// ESPressio-Mesh select the Radio and next hop for every independent delivery.
+///
+/// Every transport fragment carries the sending RadioAddress inside the Radio-owned framing. This is required for radio
+/// technologies such as nRF24 whose hardware receive path does not reveal the transmitter endpoint. A provider-supplied
+/// physical Source, when available, is treated as corroborating link evidence and must match the framed source.
 /// </remarks>
 class RadioTransport final {
 private:
     static constexpr uint8_t WireMagic0 = 0xE5u;
     static constexpr uint8_t WireMagic1 = 0x52u;
     static constexpr uint8_t WireVersion = 2u;
-    static constexpr std::size_t WireHeaderBytes = 9u;
+    static constexpr std::size_t FixedWireHeaderBytes = 10u;
 
-    struct InterfaceRecord {
-        IRadio* Radio = nullptr;
-    };
+    struct InterfaceRecord { IRadio* Radio = nullptr; };
 
     struct WireHeader {
         RadioTransferId TransferId = 0;
         uint8_t FragmentIndex = 0;
         uint8_t FragmentCount = 0;
         uint16_t LogicalPayloadBytes = 0;
+        RadioAddress Source{};
+        std::size_t EncodedBytes = 0;
     };
 
     using ByteBuffer = System::Memory::ByteVector<System::Memory::MemoryPolicy::ExternalPreferred>;
@@ -280,14 +284,23 @@ private:
         p[1] = static_cast<uint8_t>((value >> 8u) & 0xFFu);
     }
 
+    static std::size_t HeaderBytesForAddress(const RadioAddress& address) noexcept {
+        return address.IsValid() ? FixedWireHeaderBytes + address.Length : 0;
+    }
+
     static bool DecodeHeader(const uint8_t* data, std::size_t size, WireHeader& header) noexcept {
-        if (data == nullptr || size < WireHeaderBytes) return false;
+        if (data == nullptr || size < FixedWireHeaderBytes) return false;
         if (data[0] != WireMagic0 || data[1] != WireMagic1 || data[2] != WireVersion) return false;
         header.TransferId = ReadU16(data + 3);
         header.FragmentIndex = data[5];
         header.FragmentCount = data[6];
         header.LogicalPayloadBytes = ReadU16(data + 7);
-        return header.TransferId != 0 && header.FragmentCount != 0 && header.FragmentIndex < header.FragmentCount;
+        const uint8_t sourceLength = data[9];
+        if (sourceLength == 0 || sourceLength > MaximumRadioAddressBytes) return false;
+        header.EncodedBytes = FixedWireHeaderBytes + sourceLength;
+        if (size < header.EncodedBytes) return false;
+        header.Source = RadioAddress::FromBytes(data + FixedWireHeaderBytes, sourceLength);
+        return header.TransferId != 0 && header.FragmentCount != 0 && header.FragmentIndex < header.FragmentCount && header.Source.IsValid();
     }
 
     static void EncodeHeader(uint8_t* data, const WireHeader& header) noexcept {
@@ -298,11 +311,14 @@ private:
         data[5] = header.FragmentIndex;
         data[6] = header.FragmentCount;
         WriteU16(data + 7, header.LogicalPayloadBytes);
+        data[9] = header.Source.Length;
+        std::memcpy(data + FixedWireHeaderBytes, header.Source.Bytes.data(), header.Source.Length);
     }
 
-    static std::size_t FragmentPayloadBytes(const IRadio& radio) noexcept {
+    static std::size_t FragmentPayloadBytes(const IRadio& radio, const RadioAddress& source) noexcept {
+        const std::size_t headerBytes = HeaderBytesForAddress(source);
         const std::size_t mtu = radio.Capabilities().MaximumPayloadBytes;
-        return mtu <= WireHeaderBytes ? 0 : mtu - WireHeaderBytes;
+        return headerBytes == 0 || mtu <= headerBytes ? 0 : mtu - headerBytes;
     }
 
     InterfaceRecord* FindInterface(IRadio& radio) noexcept {
@@ -355,13 +371,13 @@ private:
 
 public:
     RadioTransport() = default;
-
     RadioTransport(const RadioTransport&) = delete;
     RadioTransport& operator=(const RadioTransport&) = delete;
 
     /// <summary>Returns the finite maximum complete logical transfer accepted for one interface.</summary>
     std::size_t MaximumLogicalTransferSize(const IRadio& radio) const noexcept {
-        const std::size_t chunk = FragmentPayloadBytes(radio);
+        const RadioAddress source = radio.LocalAddress();
+        const std::size_t chunk = FragmentPayloadBytes(radio, source);
         if (chunk == 0) return 0;
         std::size_t maximum = std::min<std::size_t>(ESPRESSIO_RADIO_MAX_LOGICAL_TRANSFER_BYTES, chunk * 255u);
         const uint16_t providerMaximum = radio.Capabilities().MaximumLogicalTransferBytes;
@@ -371,6 +387,7 @@ public:
 
     /// <summary>Registers one physical/link Radio interface with this logical-transfer service.</summary>
     bool AddInterface(IRadio& radio) noexcept {
+        if (!radio.LocalAddress().IsValid()) return false;
         if (FindInterface(radio) != nullptr) return true;
         for (auto& record : _interfaces) {
             if (record.Radio != nullptr) continue;
@@ -420,13 +437,10 @@ public:
     }
 
     bool IsStarted() const noexcept { return _started; }
-
     void SetReceiver(IRadioTransportReceiver* receiver) noexcept { _receiver = receiver; }
     RadioTransportObserverSubscriptions& Observers() noexcept { return _observers; }
 
-    /// <summary>
-    /// Sends one complete immutable opaque logical transfer over the explicitly selected Radio and next-hop endpoint.
-    /// </summary>
+    /// <summary>Sends one complete immutable opaque logical transfer over the explicitly selected Radio and next-hop endpoint.</summary>
     RadioTransportSendResult Send(
         IRadio& radio,
         const RadioAddress& destination,
@@ -443,9 +457,11 @@ public:
         if (!destination.IsValid()) return complete({RadioTransportSendStatus::InvalidDestination, {RadioSendStatus::InvalidAddress, 0}});
         if (payload == nullptr && payloadSize != 0) return complete({RadioTransportSendStatus::InvalidPayload, {}});
 
-        const std::size_t chunk = FragmentPayloadBytes(radio);
+        const RadioAddress source = radio.LocalAddress();
+        const std::size_t headerBytes = HeaderBytesForAddress(source);
+        const std::size_t chunk = FragmentPayloadBytes(radio, source);
         const std::size_t maximum = MaximumLogicalTransferSize(radio);
-        if (chunk == 0 || payloadSize > maximum || payloadSize > 0xFFFFu)
+        if (headerBytes == 0 || chunk == 0 || payloadSize > maximum || payloadSize > 0xFFFFu)
             return complete({RadioTransportSendStatus::MessageTooLarge, {RadioSendStatus::PayloadTooLarge, 0}});
 
         const std::size_t fragmentCountValue = payloadSize == 0 ? 1u : ((payloadSize + chunk - 1u) / chunk);
@@ -465,10 +481,17 @@ public:
             const std::size_t offset = static_cast<std::size_t>(index) * chunk;
             const std::size_t remaining = payloadSize > offset ? payloadSize - offset : 0;
             const std::size_t fragmentBytes = std::min(chunk, remaining);
-            const WireHeader header{transferId, index, fragmentCount, static_cast<uint16_t>(payloadSize)};
+            const WireHeader header{
+                transferId,
+                index,
+                fragmentCount,
+                static_cast<uint16_t>(payloadSize),
+                source,
+                headerBytes
+            };
             EncodeHeader(frame.data(), header);
-            if (fragmentBytes != 0) std::memcpy(frame.data() + WireHeaderBytes, payload + offset, fragmentBytes);
-            const auto linkResult = radio.Send(destination, frame.data(), WireHeaderBytes + fragmentBytes);
+            if (fragmentBytes != 0) std::memcpy(frame.data() + headerBytes, payload + offset, fragmentBytes);
+            const auto linkResult = radio.Send(destination, frame.data(), headerBytes + fragmentBytes);
             if (!linkResult) return complete({RadioTransportSendStatus::RadioRejected, linkResult});
         }
 
@@ -481,13 +504,14 @@ public:
     /// </summary>
     void ProcessInboundPacket(IRadio& radio, const RadioPacketView& packet) {
         if (!_started || FindInterface(radio) == nullptr) return;
-        if (!packet.Source.IsValid() || !packet.Destination.IsValid()) return;
+        if (!packet.Destination.IsValid()) return;
 
         WireHeader header;
         if (!DecodeHeader(packet.Payload, packet.PayloadSize, header)) return;
-        if (WasRecentlyDelivered(radio, packet.Source, header.TransferId)) return;
+        if (packet.Source.IsValid() && packet.Source != header.Source) return;
+        if (WasRecentlyDelivered(radio, header.Source, header.TransferId)) return;
 
-        const std::size_t chunk = FragmentPayloadBytes(radio);
+        const std::size_t chunk = FragmentPayloadBytes(radio, header.Source);
         if (chunk == 0 || header.LogicalPayloadBytes > MaximumLogicalTransferSize(radio)) return;
         const std::size_t expectedFragments = header.LogicalPayloadBytes == 0
             ? 1u
@@ -497,14 +521,14 @@ public:
         const std::size_t offset = static_cast<std::size_t>(header.FragmentIndex) * chunk;
         if (offset > header.LogicalPayloadBytes) return;
         const std::size_t expectedBytes = std::min<std::size_t>(chunk, header.LogicalPayloadBytes - offset);
-        if (packet.PayloadSize != WireHeaderBytes + expectedBytes) return;
+        if (packet.PayloadSize != header.EncodedBytes + expectedBytes) return;
 
-        ReassemblyRecord* record = FindReassembly(radio, packet.Source, header.TransferId);
+        ReassemblyRecord* record = FindReassembly(radio, header.Source, header.TransferId);
         if (record == nullptr) {
             record = AllocateReassembly();
             record->Used = true;
             record->Radio = &radio;
-            record->Source = packet.Source;
+            record->Source = header.Source;
             record->Destination = packet.Destination;
             record->TransferId = header.TransferId;
             record->FragmentCount = header.FragmentCount;
@@ -528,7 +552,7 @@ public:
 
         record->Touch = ++_touchCounter;
         if (!record->HasFragment(header.FragmentIndex)) {
-            if (expectedBytes != 0) std::memcpy(record->Buffer.data() + offset, packet.Payload + WireHeaderBytes, expectedBytes);
+            if (expectedBytes != 0) std::memcpy(record->Buffer.data() + offset, packet.Payload + header.EncodedBytes, expectedBytes);
             record->MarkFragment(header.FragmentIndex);
             ++record->ReceivedCount;
         }
