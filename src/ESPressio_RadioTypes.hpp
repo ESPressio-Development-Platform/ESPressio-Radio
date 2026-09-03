@@ -120,11 +120,12 @@ constexpr bool HasFlag(RadioPacketFlag flags, RadioPacketFlag flag) noexcept {
 
 /// <summary>Borrowed physical/link packet view delivered synchronously by a concrete radio provider.</summary>
 /// <remarks>
-/// Source and Destination are Radio-level endpoints only; they are never ESPressio device or Mesh identities.
-/// Providers intended for logical Radio transfer MUST make Source available, using a technology-owned link shim when
-/// the underlying hardware does not expose transmitter identity directly. ReceiveTimestampNanoseconds is zero when
-/// unavailable. Providers advertising RadioCapability::ReceiveTimestamp must capture it as close to physical reception
-/// as their driver permits and express it in the active process-wide System::Clock::Monotonic() nanosecond domain.
+/// Source and Destination are Radio-level endpoints only; they are never ESPressio device or Mesh identities. A provider
+/// should report Source when its hardware/driver exposes it, but technologies that cannot observe transmitter identity may
+/// leave Source invalid. RadioTransport carries the sending RadioAddress in its own fragment framing and verifies a
+/// provider-reported Source when both are available. ReceiveTimestampNanoseconds is zero when unavailable. Providers
+/// advertising RadioCapability::ReceiveTimestamp must capture it as close to physical reception as their driver permits
+/// and express it in the active process-wide System::Clock::Monotonic() nanosecond domain.
 /// </remarks>
 struct RadioPacketView {
     RadioAddress Source{};
