@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 
 namespace ESPressio::Radio {
 
@@ -57,6 +58,30 @@ struct RadioAddress {
         return Length < other.Length;
     }
 };
+
+/// <summary>
+/// Generation-safe process-local handle to one Radio-owned directly reachable peer binding.
+/// </summary>
+/// <remarks>
+/// A handle is meaningful only to the Radio peer registry that issued it. It is never a Mesh identity,
+/// is never distributed or persisted as identity, and cannot be constructed from DeviceIdentifier.
+/// Slot reuse advances Generation so a stale handle can never resolve to a newly observed peer.
+/// </remarks>
+struct RadioPeerHandle final {
+    std::uint16_t Slot{std::numeric_limits<std::uint16_t>::max()};
+    std::uint16_t Generation{0};
+
+    constexpr bool IsValid() const noexcept {
+        return Slot != std::numeric_limits<std::uint16_t>::max() && Generation != 0U;
+    }
+    constexpr explicit operator bool() const noexcept { return IsValid(); }
+    constexpr bool operator==(const RadioPeerHandle& other) const noexcept {
+        return Slot == other.Slot && Generation == other.Generation;
+    }
+    constexpr bool operator!=(const RadioPeerHandle& other) const noexcept { return !(*this == other); }
+};
+
+static_assert(sizeof(RadioPeerHandle) == 4, "RadioPeerHandle must remain a compact slot+generation value.");
 
 enum class RadioCapability : uint32_t {
     None = 0,
