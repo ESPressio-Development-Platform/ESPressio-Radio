@@ -7,11 +7,9 @@
 
 namespace ESPressio::Radio {
 
-using RadioNodeId = uint16_t;
-using RadioChannel = uint8_t;
-using RadioMessageId = uint16_t;
+/// <summary>Opaque identifier used only to correlate one Radio-owned logical link transfer.</summary>
+using RadioTransferId = uint16_t;
 
-static constexpr RadioNodeId BroadcastNode = 0xFFFFu;
 static constexpr std::size_t MaximumRadioAddressBytes = 8;
 
 /// <summary>Opaque link-layer address understood only by a concrete radio provider.</summary>
@@ -50,6 +48,14 @@ struct RadioAddress {
             (Length == 0 || std::memcmp(Bytes.data(), other.Bytes.data(), Length) == 0);
     }
     bool operator!=(const RadioAddress& other) const noexcept { return !(*this == other); }
+
+    bool operator<(const RadioAddress& other) const noexcept {
+        const uint8_t common = Length < other.Length ? Length : other.Length;
+        const int comparison = common == 0 ? 0 : std::memcmp(Bytes.data(), other.Bytes.data(), common);
+        if (comparison < 0) return true;
+        if (comparison > 0) return false;
+        return Length < other.Length;
+    }
 };
 
 enum class RadioCapability : uint32_t {
@@ -75,11 +81,22 @@ constexpr RadioCapability operator&(RadioCapability a, RadioCapability b) noexce
     return static_cast<RadioCapability>(static_cast<uint32_t>(a) & static_cast<uint32_t>(b));
 }
 
-/// <summary>Describes optional facilities supplied by one concrete radio provider.</summary>
+/// <summary>Describes bounded facilities supplied by one concrete radio provider.</summary>
 struct RadioCapabilities {
     RadioCapability Flags = RadioCapability::None;
+
+    /// <summary>Maximum opaque byte count accepted by one physical/link Send operation.</summary>
     uint16_t MaximumPayloadBytes = 0;
+
+    /// <summary>Number of meaningful bytes in this provider's RadioAddress.</summary>
     uint8_t AddressBytes = 0;
+
+    /// <summary>
+    /// Maximum complete logical transfer that the Radio layer may carry over this interface after bounded
+    /// fragmentation/reassembly. Zero means the provider has not supplied an explicit lower cap and the generic
+    /// Radio transport bound applies.
+    /// </summary>
+    uint16_t MaximumLogicalTransferBytes = 0;
 
     constexpr bool Has(RadioCapability capability) const noexcept {
         return (static_cast<uint32_t>(Flags) & static_cast<uint32_t>(capability)) ==
@@ -97,12 +114,17 @@ constexpr RadioPacketFlag operator|(RadioPacketFlag a, RadioPacketFlag b) noexce
     return static_cast<RadioPacketFlag>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
 }
 
-/// <summary>Borrowed packet view delivered synchronously by a concrete radio provider.</summary>
+constexpr bool HasFlag(RadioPacketFlag flags, RadioPacketFlag flag) noexcept {
+    return (static_cast<uint8_t>(flags) & static_cast<uint8_t>(flag)) == static_cast<uint8_t>(flag);
+}
+
+/// <summary>Borrowed physical/link packet view delivered synchronously by a concrete radio provider.</summary>
 /// <remarks>
-/// ReceiveTimestampNanoseconds is zero when unavailable. Providers advertising RadioCapability::ReceiveTimestamp must
-/// capture it as close to physical reception as their driver permits and express it in the active process-wide
-/// System::Clock::Monotonic() nanosecond domain. This common domain allows transport-neutral consumers such as Radio clock
-/// synchronization to recover the corresponding System Clock timestamp without provider-specific timing knowledge.
+/// Source and Destination are Radio-level endpoints only; they are never ESPressio device or Mesh identities.
+/// Providers intended for logical Radio transfer MUST make Source available, using a technology-owned link shim when
+/// the underlying hardware does not expose transmitter identity directly. ReceiveTimestampNanoseconds is zero when
+/// unavailable. Providers advertising RadioCapability::ReceiveTimestamp must capture it as close to physical reception
+/// as their driver permits and express it in the active process-wide System::Clock::Monotonic() nanosecond domain.
 /// </remarks>
 struct RadioPacketView {
     RadioAddress Source{};
