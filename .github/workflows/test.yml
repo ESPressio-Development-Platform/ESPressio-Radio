@@ -20,6 +20,10 @@ jobs:
         run: g++ -std=c++17 -Wall -Wextra -Werror -Isrc -Ideps/System/src -Ideps/Observable/src tests/radio_transport_tests.cpp -o radio_transport_tests -pthread
       - name: Run transport tests
         run: ./radio_transport_tests
+      - name: Build peer registry tests
+        run: g++ -std=c++17 -Wall -Wextra -Werror -Isrc -Ideps/System/src -Ideps/Observable/src tests/radio_peer_registry_tests.cpp -o radio_peer_registry_tests -pthread
+      - name: Run peer registry tests
+        run: ./radio_peer_registry_tests
       - name: Build clock synchronization protocol tests
         run: g++ -std=c++17 -Wall -Wextra -Werror -Itests/clock_stubs -Isrc -Ideps/System/src -Ideps/Observable/src tests/radio_clock_synchronizer_tests.cpp -o radio_clock_synchronizer_tests -pthread
       - name: Run clock synchronization protocol tests
@@ -95,6 +99,7 @@ jobs:
           };
 
           ESPressio::Radio::RadioTransport transport;
+          ESPressio::Radio::RadioPeerRegistry<> peers;
           ESPressio::Radio::RadioWorker worker(transport);
           ESPressio::Event::RadioEventBridge bridge;
           DummyRadio dummyRadio;
@@ -116,5 +121,5 @@ jobs:
 
           void loop() {}
           EOF
-      - name: Compile worker, optional Event bridge and radio clock synchronizer against propagation APIs
+      - name: Compile worker, peer registry, optional Event bridge and radio clock synchronizer against propagation APIs
         run: pio run -d "$RUNNER_TEMP/espressio-radio-worker-ci"
