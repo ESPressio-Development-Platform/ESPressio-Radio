@@ -53,6 +53,26 @@ int main() {
     assert(peers.Observe(radioB, Address(2), second) == RadioPeerObserveResult::Observed);
     assert(peers.Size() == 2);
 
+    // Enumeration is bounded, non-allocating and exposes the exact generation-safe handle + binding pairs.
+    std::size_t enumerated = 0;
+    bool sawFirst = false;
+    bool sawSecond = false;
+    peers.ForEach([&](RadioPeerHandle handle, const RadioPeerBinding& binding) {
+        ++enumerated;
+        if (handle == first) {
+            sawFirst = true;
+            assert(binding.Interface == &radioA);
+            assert(binding.Address == Address(1));
+        }
+        if (handle == second) {
+            sawSecond = true;
+            assert(binding.Interface == &radioB);
+            assert(binding.Address == Address(2));
+        }
+    });
+    assert(enumerated == 2);
+    assert(sawFirst && sawSecond);
+
     RadioPeerHandle full{};
     assert(peers.Observe(radioA, Address(3), full) == RadioPeerObserveResult::ResourceUnavailable);
     assert(!full);
@@ -70,6 +90,15 @@ int main() {
     assert(peers.InvalidateInterface(radioB) == 1);
     assert(peers.Resolve(second) == nullptr);
     assert(peers.Size() == 1);
+
+    enumerated = 0;
+    peers.ForEach([&](RadioPeerHandle handle, const RadioPeerBinding& binding) {
+        ++enumerated;
+        assert(handle == replacement);
+        assert(binding.Interface == &radioA);
+        assert(binding.Address == Address(3));
+    });
+    assert(enumerated == 1);
 
     RadioPeerHandle broadcast{};
     assert(peers.Observe(radioA, RadioAddress::Broadcast(1), broadcast) == RadioPeerObserveResult::Invalid);
