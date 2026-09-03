@@ -119,6 +119,25 @@ public:
         return &slot.Binding;
     }
 
+    /// <summary>
+    /// Enumerates each current peer binding synchronously without allocating a snapshot.
+    /// </summary>
+    /// <remarks>
+    /// The visitor must not structurally mutate this registry. The operation is bounded by Capacity and exists so
+    /// the owning Radio service can emit deterministic lifecycle observations before bulk invalidation.
+    /// </remarks>
+    template<typename TVisitor>
+    void ForEach(TVisitor&& visitor) const {
+        for (std::size_t index = 0; index < Capacity; ++index) {
+            const auto& slot = _slots[index];
+            if (!slot.Occupied) continue;
+            visitor(
+                RadioPeerHandle{static_cast<std::uint16_t>(index), slot.Generation},
+                slot.Binding
+            );
+        }
+    }
+
     /// <summary>Invalidates one exact current peer handle.</summary>
     bool Invalidate(RadioPeerHandle handle) noexcept {
         if (!handle || handle.Slot >= Capacity) return false;
