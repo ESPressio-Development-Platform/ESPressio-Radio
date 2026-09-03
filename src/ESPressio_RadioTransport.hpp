@@ -10,6 +10,7 @@
 #include <ESPressio_Observable.hpp>
 
 #include "ESPressio_IRadio.hpp"
+#include "ESPressio_RadioPeerRegistry.hpp"
 
 #ifndef ESPRESSIO_RADIO_MAX_INTERFACES
 #define ESPRESSIO_RADIO_MAX_INTERFACES 4
@@ -30,10 +31,13 @@ class RadioTransport;
 
 /// <summary>Borrowed complete logical transfer reconstructed by the Radio layer.</summary>
 /// <remarks>
-/// Source and Destination are opaque Radio endpoints. They are not device identities and carry no Mesh routing authority.
-/// The payload is valid only for the duration of the receiver callback.
+/// SourcePeer is the Radio-owned generation-safe handle for the directly reachable sending endpoint.
+/// Source and Destination remain opaque Radio addresses for link diagnostics/provider interoperability only;
+/// none of these values are device identities or carry Mesh routing authority. The payload is valid only for
+/// the duration of the receiver callback.
 /// </remarks>
 struct RadioTransportMessageView {
+    RadioPeerHandle SourcePeer{};
     RadioAddress Source{};
     RadioAddress Destination{};
     RadioTransferId TransferId = 0;
@@ -53,6 +57,7 @@ enum class RadioTransportSendStatus : uint8_t {
     Accepted,
     NotStarted,
     InterfaceNotRegistered,
+    InvalidPeer,
     InvalidDestination,
     InvalidPayload,
     MessageTooLarge,
@@ -191,14 +196,17 @@ public:
 /// Hardware-neutral direct-link logical transfer service for ESPressio radios.
 /// </summary>
 /// <remarks>
-/// RadioTransport owns only bounded hop-local fragmentation/reassembly, duplicate suppression and delivery of complete
-/// opaque bytes over a caller-selected Radio interface and next-hop RadioAddress. It deliberately owns no logical-node
-/// routing table, no forwarding policy, no Mesh hop limit and no conceptual primitive semantics. Higher layers such as
-/// ESPressio-Mesh select the Radio and next hop for every independent delivery.
+/// RadioTransport owns bounded hop-local fragmentation/reassembly, duplicate suppression and a bounded
+/// generation-safe direct-peer registry. Higher layers use RadioPeerHandle for ordinary direct unicast;
+/// provider RadioAddress values remain below that ownership boundary and are still available only where
+/// explicit broadcast/provider-level mechanics require them. RadioTransport deliberately owns no logical-node
+/// routing table, no forwarding policy, no Mesh hop limit and no conceptual primitive semantics.
 ///
 /// Every transport fragment carries the sending RadioAddress inside the Radio-owned framing. This is required for radio
 /// technologies such as nRF24 whose hardware receive path does not reveal the transmitter endpoint. A provider-supplied
 /// physical Source, when available, is treated as corroborating link evidence and must match the framed source.
+/// A complete inbound transfer is delivered upward only after its direct source has a valid RadioPeerHandle; peer-table
+/// saturation therefore applies explicit bounded backpressure rather than exposing raw provider addressing as identity.
 /// </remarks>
 class RadioTransport final {
 private:
@@ -267,6 +275,7 @@ private:
 
     IRadioTransportReceiver* _receiver = nullptr;
     RadioTransportObserverSubscriptions _observers{};
+    RadioPeerRegistry<> _peers{};
     std::array<InterfaceRecord, ESPRESSIO_RADIO_MAX_INTERFACES> _interfaces{};
     std::array<ReassemblyRecord, ESPRESSIO_RADIO_MAX_REASSEMBLIES> _reassemblies{};
     std::array<RecentTransferRecord, ESPRESSIO_RADIO_MAX_RECENT_TRANSFERS> _recent{};
@@ -398,11 +407,12 @@ public:
         return false;
     }
 
-    /// <summary>Removes a Radio interface and any incomplete reassemblies owned by it.</summary>
+    /// <summary>Removes a Radio interface and invalidates every peer handle/reassembly owned by it.</summary>
     bool RemoveInterface(IRadio& radio) noexcept {
         auto* record = FindInterface(radio);
         if (record == nullptr) return false;
         record->Radio = nullptr;
+        _peers.InvalidateInterface(radio);
         for (auto& reassembly : _reassemblies) if (reassembly.Radio == &radio) reassembly.Reset();
         for (auto& recent : _recent) if (recent.Radio == &radio) recent = {};
         _observers.NotifyInterfaceRemoved(*this, radio);
@@ -426,10 +436,11 @@ public:
         return true;
     }
 
-    /// <summary>Stops logical transfer and all registered Radio interfaces.</summary>
+    /// <summary>Stops logical transfer, invalidates ephemeral peer handles and stops all registered Radio interfaces.</summary>
     void Stop() noexcept {
         if (!_started) return;
         _started = false;
+        _peers.Clear();
         for (auto& reassembly : _reassemblies) reassembly.Reset();
         for (auto& recent : _recent) recent = {};
         for (const auto& record : _interfaces) if (record.Radio != nullptr) record.Radio->Stop();
@@ -440,7 +451,32 @@ public:
     void SetReceiver(IRadioTransportReceiver* receiver) noexcept { _receiver = receiver; }
     RadioTransportObserverSubscriptions& Observers() noexcept { return _observers; }
 
-    /// <summary>Sends one complete immutable opaque logical transfer over the explicitly selected Radio and next-hop endpoint.</summary>
+    /// <summary>Gets the Radio-owned peer registry used by this transport for direct-peer resolution.</summary>
+    RadioPeerRegistry<>& Peers() noexcept { return _peers; }
+    const RadioPeerRegistry<>& Peers() const noexcept { return _peers; }
+
+    /// <summary>
+    /// Sends one complete immutable opaque unicast transfer to a current Radio-owned peer handle.
+    /// </summary>
+    RadioTransportSendResult Send(
+        RadioPeerHandle peer,
+        const uint8_t* payload,
+        std::size_t payloadSize
+    ) {
+        const auto* binding = _peers.Resolve(peer);
+        if (binding == nullptr || !binding->IsValid()) {
+            return {RadioTransportSendStatus::InvalidPeer, {RadioSendStatus::InvalidAddress, 0}};
+        }
+        return Send(*binding->Interface, binding->Address, payload, payloadSize);
+    }
+
+    /// <summary>
+    /// Sends one complete immutable opaque logical transfer over an explicitly selected provider endpoint.
+    /// </summary>
+    /// <remarks>
+    /// Higher layers should normally use the RadioPeerHandle overload for direct unicast. This address form remains
+    /// for Radio-owned broadcast/provider mechanics and integrations that are themselves responsible for peer creation.
+    /// </remarks>
     RadioTransportSendResult Send(
         IRadio& radio,
         const RadioAddress& destination,
@@ -559,7 +595,18 @@ public:
 
         if (record->ReceivedCount != record->FragmentCount) return;
 
+        RadioPeerHandle sourcePeer{};
+        const auto peerResult = _peers.Observe(radio, record->Source, sourcePeer);
+        if (peerResult == RadioPeerObserveResult::Invalid ||
+            peerResult == RadioPeerObserveResult::ResourceUnavailable ||
+            !sourcePeer) {
+            // Do not commit recent-transfer suppression: a later retry may succeed after peer resources become available.
+            record->Reset();
+            return;
+        }
+
         RadioTransportMessageView message;
+        message.SourcePeer = sourcePeer;
         message.Source = record->Source;
         message.Destination = record->Destination;
         message.TransferId = record->TransferId;
