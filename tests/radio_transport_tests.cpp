@@ -76,7 +76,6 @@ private:
     FakeRadio* _peer = nullptr;
 };
 
-/// <summary>Test-only synchronous ingress stand-in for RadioWorker.</summary>
 class TestIngress final : public IRadioReceiver {
 public:
     explicit TestIngress(RadioTransport& transport) : _transport(transport) {}
@@ -136,12 +135,32 @@ public:
 class TransportObserver final :
     public IRadioTransportLifecycleObserver,
     public IRadioTransportInterfaceObserver,
+    public IRadioTransportPeerObserver,
     public IRadioTransportMessageObserver {
 public:
     void OnRadioTransportStarted(RadioTransport&) override { ++Started; }
     void OnRadioTransportStopped(RadioTransport&) override { ++Stopped; }
     void OnRadioInterfaceAdded(RadioTransport&, IRadio&) override { ++InterfacesAdded; }
     void OnRadioInterfaceRemoved(RadioTransport&, IRadio&) override { ++InterfacesRemoved; }
+    void OnRadioPeerObserved(RadioTransport&, IRadio& radio, RadioPeerHandle peer, const RadioAddress& address) override {
+        ++PeersObserved;
+        LastPeerInterface = &radio;
+        LastPeer = peer;
+        LastPeerAddress = address;
+    }
+    void OnRadioPeerInvalidated(
+        RadioTransport&,
+        IRadio& radio,
+        RadioPeerHandle peer,
+        const RadioAddress& address,
+        RadioPeerInvalidationReason reason
+    ) override {
+        ++PeersInvalidated;
+        LastPeerInterface = &radio;
+        LastPeer = peer;
+        LastPeerAddress = address;
+        LastInvalidationReason = reason;
+    }
     void OnRadioTransportSendCompleted(
         RadioTransport&,
         IRadio&,
@@ -160,9 +179,15 @@ public:
     int Stopped = 0;
     int InterfacesAdded = 0;
     int InterfacesRemoved = 0;
+    int PeersObserved = 0;
+    int PeersInvalidated = 0;
     int Sends = 0;
     int Received = 0;
     bool LastSendAccepted = false;
+    IRadio* LastPeerInterface = nullptr;
+    RadioPeerHandle LastPeer{};
+    RadioAddress LastPeerAddress{};
+    RadioPeerInvalidationReason LastInvalidationReason = RadioPeerInvalidationReason::Explicit;
 };
 
 static void TestFragmentedDirectLinkDeliveryAndObservers() {
@@ -185,11 +210,13 @@ static void TestFragmentedDirectLinkDeliveryAndObservers() {
     auto observerARegistration = transportA.Observers().Subscribe<
         IRadioTransportLifecycleObserver,
         IRadioTransportInterfaceObserver,
+        IRadioTransportPeerObserver,
         IRadioTransportMessageObserver
     >(&observerA);
     auto observerBRegistration = transportB.Observers().Subscribe<
         IRadioTransportLifecycleObserver,
         IRadioTransportInterfaceObserver,
+        IRadioTransportPeerObserver,
         IRadioTransportMessageObserver
     >(&observerB);
 
@@ -220,6 +247,10 @@ static void TestFragmentedDirectLinkDeliveryAndObservers() {
     assert(peer != nullptr);
     assert(peer->Interface == &radioB);
     assert(peer->Address == radioA.LocalAddress());
+    assert(observerB.PeersObserved == 1);
+    assert(observerB.LastPeer == receiver.SourcePeer);
+    assert(observerB.LastPeerAddress == radioA.LocalAddress());
+    assert(observerB.LastPeerInterface == &radioB);
 
     assert(linkA.Started == 1);
     assert(linkA.Sent > 1);
@@ -241,6 +272,8 @@ static void TestFragmentedDirectLinkDeliveryAndObservers() {
     transportB.Stop();
     assert(linkA.Stopped == 1);
     assert(linkB.Stopped == 1);
+    assert(observerB.PeersInvalidated == 1);
+    assert(observerB.LastInvalidationReason == RadioPeerInvalidationReason::TransportStopped);
     assert(observerB.Stopped == 1);
 }
 
@@ -256,6 +289,8 @@ static void TestPeerHandleSendAndGenerationInvalidation() {
     TestIngress ingressB(transportB);
     CaptureReceiver receiverA;
     CaptureReceiver receiverB;
+    TransportObserver observerB;
+    auto observerRegistration = transportB.Observers().Subscribe<IRadioTransportPeerObserver>(&observerB);
     transportA.SetReceiver(&receiverA);
     transportB.SetReceiver(&receiverB);
 
@@ -270,6 +305,7 @@ static void TestPeerHandleSendAndGenerationInvalidation() {
     assert(transportA.Send(radioA, radioB.LocalAddress(), hello.data(), hello.size()));
     const RadioPeerHandle peerAFromB = receiverB.SourcePeer;
     assert(peerAFromB);
+    assert(observerB.PeersObserved == 1);
 
     const std::array<uint8_t, 2> reply{{9, 8}};
     assert(transportB.Send(peerAFromB, reply.data(), reply.size()));
@@ -277,20 +313,67 @@ static void TestPeerHandleSendAndGenerationInvalidation() {
     assert(receiverA.Payload == std::vector<uint8_t>(reply.begin(), reply.end()));
     assert(receiverA.SourcePeer);
 
-    // A controlled Radio transport reset invalidates all ephemeral direct-peer handles.
-    transportB.Stop();
-    const auto stale = transportB.Send(peerAFromB, reply.data(), reply.size());
-    assert(!stale);
-    assert(stale.Status == RadioTransportSendStatus::InvalidPeer);
+    assert(transportB.InvalidatePeer(peerAFromB));
+    assert(observerB.PeersInvalidated == 1);
+    assert(observerB.LastPeer == peerAFromB);
+    assert(observerB.LastInvalidationReason == RadioPeerInvalidationReason::Explicit);
+    assert(transportB.Peers().Resolve(peerAFromB) == nullptr);
 
-    assert(transportB.Start());
     assert(transportA.Send(radioA, radioB.LocalAddress(), hello.data(), hello.size()));
     const RadioPeerHandle replacement = receiverB.SourcePeer;
     assert(replacement);
     assert(replacement.Slot == peerAFromB.Slot);
     assert(replacement.Generation != peerAFromB.Generation);
-    assert(transportB.Peers().Resolve(peerAFromB) == nullptr);
-    assert(transportB.Peers().Resolve(replacement) != nullptr);
+    assert(observerB.PeersObserved == 2);
+
+    transportB.Stop();
+    assert(observerB.PeersInvalidated == 2);
+    assert(observerB.LastPeer == replacement);
+    assert(observerB.LastInvalidationReason == RadioPeerInvalidationReason::TransportStopped);
+    const auto stale = transportB.Send(replacement, reply.data(), reply.size());
+    assert(!stale);
+    assert(stale.Status == RadioTransportSendStatus::InvalidPeer);
+
+    transportA.Stop();
+}
+
+static void TestInterfaceRemovalInvalidatesOwnedPeers() {
+    FakeRadio radioA(0xA4, 64);
+    FakeRadio radioB(0xB4, 64);
+    radioA.Connect(radioB);
+    radioB.Connect(radioA);
+
+    RadioTransport transportA;
+    RadioTransport transportB;
+    TestIngress ingressA(transportA);
+    TestIngress ingressB(transportB);
+    CaptureReceiver receiverB;
+    TransportObserver observerB;
+    auto observerRegistration = transportB.Observers().Subscribe<
+        IRadioTransportPeerObserver,
+        IRadioTransportInterfaceObserver
+    >(&observerB);
+    transportB.SetReceiver(&receiverB);
+
+    assert(transportA.AddInterface(radioA));
+    assert(transportB.AddInterface(radioB));
+    radioA.SetReceiver(&ingressA);
+    radioB.SetReceiver(&ingressB);
+    assert(transportA.Start());
+    assert(transportB.Start());
+
+    const std::array<uint8_t, 1> payload{{7}};
+    assert(transportA.Send(radioA, radioB.LocalAddress(), payload.data(), payload.size()));
+    const auto peer = receiverB.SourcePeer;
+    assert(peer);
+    assert(observerB.PeersObserved == 1);
+
+    assert(transportB.RemoveInterface(radioB));
+    assert(observerB.PeersInvalidated == 1);
+    assert(observerB.LastPeer == peer);
+    assert(observerB.LastInvalidationReason == RadioPeerInvalidationReason::InterfaceRemoved);
+    assert(observerB.InterfacesRemoved == 1);
+    assert(transportB.Peers().Resolve(peer) == nullptr);
 
     transportA.Stop();
     transportB.Stop();
@@ -334,6 +417,7 @@ static void TestProviderLogicalMaximumIsEnforced() {
 int main() {
     TestFragmentedDirectLinkDeliveryAndObservers();
     TestPeerHandleSendAndGenerationInvalidation();
+    TestInterfaceRemovalInvalidatesOwnedPeers();
     TestProviderLogicalMaximumIsEnforced();
     return 0;
 }
