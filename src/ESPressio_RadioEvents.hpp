@@ -23,22 +23,19 @@ struct RadioEventSourceSnapshot {
         : LocalAddress(radio.LocalAddress()), Capabilities(radio.Capabilities()) {}
 };
 
-/// <summary>Event emitted after a concrete radio starts successfully.</summary>
 class RadioStartedEvent final : public TypedEvent<RadioStartedEvent> {
 public:
     const RadioEventSourceSnapshot Radio;
     explicit RadioStartedEvent(Radio::IRadio& radio) noexcept : Radio(radio) {}
 };
 
-/// <summary>Event emitted after a concrete radio stops.</summary>
 class RadioStoppedEvent final : public TypedEvent<RadioStoppedEvent> {
 public:
     const RadioEventSourceSnapshot Radio;
     explicit RadioStoppedEvent(Radio::IRadio& radio) noexcept : Radio(radio) {}
 };
 
-/// <summary>Event emitted for a link packet observed after RadioTransport has synchronously consumed it.</summary>
-/// <remarks>The observer payload is borrowed, so this asynchronous event takes one required owned snapshot in externally preferred memory.</remarks>
+/// <summary>Event emitted for a physical/link packet observed after RadioTransport has synchronously consumed it.</summary>
 class RadioPacketReceivedEvent final : public TypedEvent<RadioPacketReceivedEvent> {
 public:
     const RadioEventSourceSnapshot Radio;
@@ -66,7 +63,6 @@ private:
     }
 };
 
-/// <summary>Event emitted after a concrete-radio send attempt completes synchronously.</summary>
 class RadioSendCompletedEvent final : public TypedEvent<RadioSendCompletedEvent> {
 public:
     const RadioEventSourceSnapshot Radio;
@@ -79,130 +75,74 @@ public:
         const Radio::RadioAddress& destination,
         std::size_t payloadSize,
         const Radio::RadioSendResult& result
-    ) noexcept :
-        Radio(radio), Destination(destination), PayloadSize(payloadSize), Result(result) {}
+    ) noexcept : Radio(radio), Destination(destination), PayloadSize(payloadSize), Result(result) {}
 };
 
 /// <summary>Event emitted after RadioTransport starts successfully.</summary>
-class RadioTransportStartedEvent final : public TypedEvent<RadioTransportStartedEvent> {
-public:
-    const Radio::RadioNodeId LocalNode;
-    explicit RadioTransportStartedEvent(Radio::RadioTransport& transport) noexcept
-        : LocalNode(transport.LocalNode()) {}
-};
+class RadioTransportStartedEvent final : public TypedEvent<RadioTransportStartedEvent> {};
 
 /// <summary>Event emitted after RadioTransport stops.</summary>
-class RadioTransportStoppedEvent final : public TypedEvent<RadioTransportStoppedEvent> {
-public:
-    const Radio::RadioNodeId LocalNode;
-    explicit RadioTransportStoppedEvent(Radio::RadioTransport& transport) noexcept
-        : LocalNode(transport.LocalNode()) {}
-};
+class RadioTransportStoppedEvent final : public TypedEvent<RadioTransportStoppedEvent> {};
 
-/// <summary>Event emitted when a radio interface is attached/configured on RadioTransport.</summary>
-class RadioInterfaceConfiguredEvent final : public TypedEvent<RadioInterfaceConfiguredEvent> {
+/// <summary>Event emitted when a physical/link Radio interface is registered with RadioTransport.</summary>
+class RadioInterfaceAddedEvent final : public TypedEvent<RadioInterfaceAddedEvent> {
 public:
-    const Radio::RadioNodeId LocalNode;
     const RadioEventSourceSnapshot Radio;
-    const bool DefaultRoute;
-
-    RadioInterfaceConfiguredEvent(
-        Radio::RadioTransport& transport,
-        Radio::IRadio& radio,
-        bool defaultRoute
-    ) noexcept : LocalNode(transport.LocalNode()), Radio(radio), DefaultRoute(defaultRoute) {}
+    explicit RadioInterfaceAddedEvent(Radio::IRadio& radio) noexcept : Radio(radio) {}
 };
 
-/// <summary>Event emitted when a logical destination route is configured.</summary>
-class RadioRouteConfiguredEvent final : public TypedEvent<RadioRouteConfiguredEvent> {
+/// <summary>Event emitted when a physical/link Radio interface is removed from RadioTransport.</summary>
+class RadioInterfaceRemovedEvent final : public TypedEvent<RadioInterfaceRemovedEvent> {
 public:
-    const Radio::RadioNodeId LocalNode;
-    const Radio::RadioNodeId DestinationNode;
     const RadioEventSourceSnapshot Radio;
-    const Radio::RadioAddress NextHop;
-
-    RadioRouteConfiguredEvent(
-        Radio::RadioTransport& transport,
-        Radio::RadioNodeId destination,
-        Radio::IRadio& radio,
-        const Radio::RadioAddress& nextHop
-    ) noexcept :
-        LocalNode(transport.LocalNode()), DestinationNode(destination), Radio(radio), NextHop(nextHop) {}
+    explicit RadioInterfaceRemovedEvent(Radio::IRadio& radio) noexcept : Radio(radio) {}
 };
 
-/// <summary>Event emitted when a logical destination route is removed.</summary>
-class RadioRouteRemovedEvent final : public TypedEvent<RadioRouteRemovedEvent> {
-public:
-    const Radio::RadioNodeId LocalNode;
-    const Radio::RadioNodeId DestinationNode;
-
-    RadioRouteRemovedEvent(Radio::RadioTransport& transport, Radio::RadioNodeId destination) noexcept
-        : LocalNode(transport.LocalNode()), DestinationNode(destination) {}
-};
-
-/// <summary>Event emitted after RadioTransport attempts an outbound logical-message send.</summary>
+/// <summary>Event emitted after RadioTransport attempts a complete direct-link logical transfer.</summary>
 class RadioTransportSendCompletedEvent final : public TypedEvent<RadioTransportSendCompletedEvent> {
 public:
-    const Radio::RadioNodeId LocalNode;
-    const Radio::RadioNodeId DestinationNode;
-    const Radio::RadioChannel Channel;
+    const RadioEventSourceSnapshot Radio;
+    const Radio::RadioAddress Destination;
     const std::size_t PayloadSize;
     const Radio::RadioTransportSendResult Result;
 
     RadioTransportSendCompletedEvent(
-        Radio::RadioTransport& transport,
-        Radio::RadioNodeId destination,
-        Radio::RadioChannel channel,
+        Radio::IRadio& radio,
+        const Radio::RadioAddress& destination,
         std::size_t payloadSize,
         const Radio::RadioTransportSendResult& result
-    ) noexcept :
-        LocalNode(transport.LocalNode()), DestinationNode(destination), Channel(channel),
-        PayloadSize(payloadSize), Result(result) {}
+    ) noexcept : Radio(radio), Destination(destination), PayloadSize(payloadSize), Result(result) {}
 };
 
-/// <summary>Owned asynchronous snapshot of one complete opaque RadioTransport message.</summary>
+/// <summary>Owned asynchronous snapshot of one complete opaque direct-link Radio transfer.</summary>
 struct RadioTransportMessageEventSnapshot {
-    Radio::RadioNodeId SourceNode = 0;
-    Radio::RadioNodeId DestinationNode = 0;
-    Radio::RadioChannel Channel = 0;
-    Radio::RadioMessageId MessageId = 0;
+    Radio::RadioAddress Source{};
+    Radio::RadioAddress Destination{};
+    Radio::RadioTransferId TransferId = 0;
+    Radio::RadioPacketFlag Flags = Radio::RadioPacketFlag::None;
     RadioEventPayload Payload{};
 
     explicit RadioTransportMessageEventSnapshot(const Radio::RadioTransportMessageView& message)
-        : SourceNode(message.SourceNode),
-          DestinationNode(message.DestinationNode),
-          Channel(message.Channel),
-          MessageId(message.MessageId) {
+        : Source(message.Source),
+          Destination(message.Destination),
+          TransferId(message.TransferId),
+          Flags(message.Flags) {
         if (message.Payload != nullptr && message.PayloadSize != 0) {
             Payload.assign(message.Payload, message.Payload + message.PayloadSize);
         }
     }
 };
 
-/// <summary>Event emitted after a complete logical message is delivered locally by RadioTransport.</summary>
+/// <summary>Event emitted after a complete direct-link logical transfer is delivered by RadioTransport.</summary>
 class RadioTransportMessageReceivedEvent final : public TypedEvent<RadioTransportMessageReceivedEvent> {
 public:
-    const Radio::RadioNodeId LocalNode;
+    const RadioEventSourceSnapshot Radio;
     const RadioTransportMessageEventSnapshot Message;
 
     RadioTransportMessageReceivedEvent(
-        Radio::RadioTransport& transport,
+        Radio::IRadio& radio,
         const Radio::RadioTransportMessageView& message
-    ) : LocalNode(transport.LocalNode()), Message(message) {}
-};
-
-/// <summary>Event emitted after RadioTransport attempts to forward a complete logical message.</summary>
-class RadioTransportMessageForwardedEvent final : public TypedEvent<RadioTransportMessageForwardedEvent> {
-public:
-    const Radio::RadioNodeId LocalNode;
-    const RadioTransportMessageEventSnapshot Message;
-    const Radio::RadioTransportSendResult Result;
-
-    RadioTransportMessageForwardedEvent(
-        Radio::RadioTransport& transport,
-        const Radio::RadioTransportMessageView& message,
-        const Radio::RadioTransportSendResult& result
-    ) : LocalNode(transport.LocalNode()), Message(message), Result(result) {}
+    ) : Radio(radio), Message(message) {}
 };
 
 } // namespace ESPressio::Event
