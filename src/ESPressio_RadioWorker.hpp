@@ -27,21 +27,21 @@ struct RadioWorkerConfiguration {
 };
 
 /// <summary>
-/// ESPressio PrecisionThread worker responsible only for advancing inbound radio traffic into RadioTransport.
+/// ESPressio PrecisionThread worker responsible only for draining physical Radio ingress and advancing Radio-owned
+/// direct-link logical reassembly.
 /// </summary>
 /// <remarks>
-/// The worker does not authenticate/decrypt messages and does not understand Command, Event, State, or any other
-/// Foundation Type. RadioTransport reconstructs/routes opaque messages and hands locally addressed messages onward to
-/// its configured receiver, which is expected to be the Security/authentication boundary.
+/// The worker never authenticates messages, resolves Mesh routes or understands Command, Event, State or another
+/// conceptual primitive family. RadioTransport reconstructs opaque direct-link transfers and hands complete bytes to
+/// its configured receiver. Higher layers own all onward-routing and distributed semantics.
 ///
-/// Callback-driven providers queue their packet bytes in provider-owned bounded storage and call
+/// Callback-driven providers queue packet bytes in provider-owned bounded storage and call
 /// IRadioWorkSignal::OnRadioWorkAvailable(). The current PrecisionThread Working Branch exposes Bump() for this purpose:
 /// it advances the next iteration to the current clock time and signals the scheduler. Provider queues and hardware are
 /// drained by Iterate(), so RadioTransport processing never runs inside a Wi-Fi/ESP-NOW driver callback.
 ///
 /// PrecisionThread is intentional rather than EventThread: inbound radio availability is scheduling/work state, not an
-/// ESPressio Foundation Event. The worker therefore remains completely unaware of Event payload types while still
-/// gaining the common Threads lifecycle, observation, cadence and rate-limiting behaviour.
+/// ESPressio conceptual Event.
 /// </remarks>
 class RadioWorker final
     : public Threads::PrecisionThread<
@@ -77,12 +77,12 @@ public:
     RadioWorker& operator=(RadioWorker&&) = delete;
 
     /// <summary>
-    /// Adds a radio to RadioTransport and makes this worker the sole inbound-service path for that interface.
+    /// Registers a Radio with RadioTransport and makes this worker the sole inbound-service path for that interface.
     /// </summary>
-    bool AddInterface(IRadio& radio, bool defaultRoute = false) noexcept {
+    bool AddInterface(IRadio& radio) noexcept {
         for (IRadio* existing : _radios) {
             if (existing == &radio) {
-                if (!_transport.AddInterface(radio, defaultRoute)) return false;
+                if (!_transport.AddInterface(radio)) return false;
                 radio.SetReceiver(this);
                 radio.SetWorkSignal(this);
                 return true;
@@ -91,7 +91,7 @@ public:
 
         for (IRadio*& slot : _radios) {
             if (slot != nullptr) continue;
-            if (!_transport.AddInterface(radio, defaultRoute)) return false;
+            if (!_transport.AddInterface(radio)) return false;
             slot = &radio;
             radio.SetReceiver(this);
             radio.SetWorkSignal(this);
@@ -118,7 +118,7 @@ public:
 
     /// <summary>
     /// Requests an immediate worker iteration after a concrete provider has queued asynchronous inbound work.
-    /// No packet parsing, routing, authentication, or observer dispatch occurs on the provider callback thread.
+    /// No packet parsing, routing, authentication or observer dispatch occurs on the provider callback thread.
     /// </summary>
     void OnRadioWorkAvailable(IRadio&) noexcept override {
         try {
@@ -129,10 +129,9 @@ public:
     }
 
     /// <summary>
-    /// Receives one provider-drained link packet on the RadioWorker thread and advances it into RadioTransport.
+    /// Receives one provider-drained physical packet on the RadioWorker thread and advances Radio-level reassembly.
     /// </summary>
     void OnRadioPacket(IRadio& radio, const RadioPacketView& packet) override {
-        // The onward-transport path gets priority. Supplemental observers run only after transport has consumed the view.
         _transport.ProcessInboundPacket(radio, packet);
         radio.Observers().NotifyPacketReceived(radio, packet);
     }
