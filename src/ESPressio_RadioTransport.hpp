@@ -30,12 +30,6 @@ namespace ESPressio::Radio {
 class RadioTransport;
 
 /// <summary>Borrowed complete logical transfer reconstructed by the Radio layer.</summary>
-/// <remarks>
-/// SourcePeer is the Radio-owned generation-safe handle for the directly reachable sending endpoint.
-/// Source and Destination remain opaque Radio addresses for link diagnostics/provider interoperability only;
-/// none of these values are device identities or carry Mesh routing authority. The payload is valid only for
-/// the duration of the receiver callback.
-/// </remarks>
 struct RadioTransportMessageView {
     RadioPeerHandle SourcePeer{};
     RadioAddress Source{};
@@ -46,7 +40,6 @@ struct RadioTransportMessageView {
     RadioPacketFlag Flags = RadioPacketFlag::None;
 };
 
-/// <summary>Consumes complete direct-link logical transfers after Radio-owned reassembly.</summary>
 class IRadioTransportReceiver {
 public:
     virtual ~IRadioTransportReceiver() = default;
@@ -64,6 +57,14 @@ enum class RadioTransportSendStatus : uint8_t {
     RadioRejected
 };
 
+/// <summary>
+/// Immediate logical-transfer admission plus aggregate direct-link evidence established for every fragment.
+/// </summary>
+/// <remarks>
+/// `Accepted` alone means only that every fragment submission was accepted. `LinkResult.Evidence` is stronger only when
+/// every fragment provider established the corresponding fact. A fragmented logical transfer is TransmissionCompleted
+/// only when every fragment is known completed, and PeerAcknowledged only when every fragment was acknowledged.
+/// </remarks>
 struct RadioTransportSendResult {
     RadioTransportSendStatus Status = RadioTransportSendStatus::RadioRejected;
     RadioSendResult LinkResult{};
@@ -73,14 +74,12 @@ struct RadioTransportSendResult {
     }
 };
 
-/// <summary>Reason one Radio-owned peer handle ceased to be current.</summary>
 enum class RadioPeerInvalidationReason : std::uint8_t {
     Explicit,
     InterfaceRemoved,
     TransportStopped
 };
 
-/// <summary>Observes RadioTransport lifecycle transitions.</summary>
 class IRadioTransportLifecycleObserver : public virtual Observable::IObserver {
 public:
     virtual ~IRadioTransportLifecycleObserver() = default;
@@ -88,7 +87,6 @@ public:
     virtual void OnRadioTransportStopped(RadioTransport& transport) = 0;
 };
 
-/// <summary>Observes interface registration changes owned by RadioTransport.</summary>
 class IRadioTransportInterfaceObserver : public virtual Observable::IObserver {
 public:
     virtual ~IRadioTransportInterfaceObserver() = default;
@@ -96,12 +94,6 @@ public:
     virtual void OnRadioInterfaceRemoved(RadioTransport& transport, IRadio& radio) = 0;
 };
 
-/// <summary>Observes generation-safe Radio peer lifecycle transitions.</summary>
-/// <remarks>
-/// Peer observations are link-local only and grant no Mesh/device identity authority. Invalidation is emitted when
-/// an exact handle is explicitly removed, when its owning Radio interface is removed, or when RadioTransport stops.
-/// Observer callbacks are informational and must not structurally mutate RadioTransport while notification is active.
-/// </remarks>
 class IRadioTransportPeerObserver : public virtual Observable::IObserver {
 public:
     virtual ~IRadioTransportPeerObserver() = default;
@@ -120,7 +112,13 @@ public:
     ) = 0;
 };
 
-/// <summary>Observes complete logical-transfer send and receive operations.</summary>
+/// <summary>
+/// Observes completion of the synchronous RadioTransport send attempt and complete inbound logical transfers.
+/// </summary>
+/// <remarks>
+/// `OnRadioTransportSendCompleted` means the API attempt returned, not that transmission necessarily completed. Inspect
+/// `result.LinkResult.Evidence` for qualified transmission/acknowledgement evidence.
+/// </remarks>
 class IRadioTransportMessageObserver : public virtual Observable::IObserver {
 public:
     virtual ~IRadioTransportMessageObserver() = default;
@@ -138,7 +136,6 @@ public:
     ) = 0;
 };
 
-/// <summary>Typed RAII Observable subscriptions emitted by RadioTransport.</summary>
 class RadioTransportObserverSubscriptions final {
 private:
     class Dispatcher final : public Observable::Observable {
@@ -167,17 +164,10 @@ private:
                     [&](IRadioTransportInterfaceObserver* o) { o->OnRadioInterfaceRemoved(transport, radio); });
             });
         }
-        void PeerObserved(
-            RadioTransport& transport,
-            IRadio& radio,
-            RadioPeerHandle peer,
-            const RadioAddress& address
-        ) {
+        void PeerObserved(RadioTransport& transport, IRadio& radio, RadioPeerHandle peer, const RadioAddress& address) {
             ExecuteNotification([&](NotificationContext& n) {
                 n.WithObservers<IRadioTransportPeerObserver>(
-                    [&](IRadioTransportPeerObserver* o) {
-                        o->OnRadioPeerObserved(transport, radio, peer, address);
-                    });
+                    [&](IRadioTransportPeerObserver* o) { o->OnRadioPeerObserved(transport, radio, peer, address); });
             });
         }
         void PeerInvalidated(
@@ -216,28 +206,19 @@ private:
         }
     };
 
-    using DispatcherOwner = decltype(System::Memory::MakeShared<
-        Dispatcher,
-        System::Memory::MemoryPolicy::ExternalPreferred
-    >());
-
+    using DispatcherOwner = decltype(System::Memory::MakeShared<Dispatcher, System::Memory::MemoryPolicy::ExternalPreferred>());
     DispatcherOwner _dispatcher;
 
 public:
     RadioTransportObserverSubscriptions()
-        : _dispatcher(System::Memory::MakeShared<
-            Dispatcher,
-            System::Memory::MemoryPolicy::ExternalPreferred
-        >()) {}
+        : _dispatcher(System::Memory::MakeShared<Dispatcher, System::Memory::MemoryPolicy::ExternalPreferred>()) {}
 
     template<typename... ObserverInterfaces, typename TObserver>
     Observable::ObserverHandlePtr Subscribe(TObserver* observer) {
         return _dispatcher->template RegisterObserverAs<ObserverInterfaces...>(observer);
     }
-
     void Unsubscribe(Observable::IObserver* observer) { _dispatcher->UnregisterObserver(observer); }
     bool IsSubscribed(Observable::IObserver* observer) { return _dispatcher->IsObserverRegistered(observer); }
-
     void NotifyStarted(RadioTransport& t) noexcept { try { _dispatcher->Started(t); } catch (...) {} }
     void NotifyStopped(RadioTransport& t) noexcept { try { _dispatcher->Stopped(t); } catch (...) {} }
     void NotifyInterfaceAdded(RadioTransport& t, IRadio& r) noexcept { try { _dispatcher->InterfaceAdded(t, r); } catch (...) {} }
@@ -262,22 +243,6 @@ public:
     }
 };
 
-/// <summary>
-/// Hardware-neutral direct-link logical transfer service for ESPressio radios.
-/// </summary>
-/// <remarks>
-/// RadioTransport owns bounded hop-local fragmentation/reassembly, duplicate suppression and a bounded
-/// generation-safe direct-peer registry. Higher layers use RadioPeerHandle for ordinary direct unicast;
-/// provider RadioAddress values remain below that ownership boundary and are still available only where
-/// explicit broadcast/provider-level mechanics require them. RadioTransport deliberately owns no logical-node
-/// routing table, no forwarding policy, no Mesh hop limit and no conceptual primitive semantics.
-///
-/// Every transport fragment carries the sending RadioAddress inside the Radio-owned framing. This is required for radio
-/// technologies such as nRF24 whose hardware receive path does not reveal the transmitter endpoint. A provider-supplied
-/// physical Source, when available, is treated as corroborating link evidence and must match the framed source.
-/// A complete inbound transfer is delivered upward only after its direct source has a valid RadioPeerHandle; peer-table
-/// saturation therefore applies explicit bounded backpressure rather than exposing raw provider addressing as identity.
-/// </remarks>
 class RadioTransport final {
 private:
     static constexpr uint8_t WireMagic0 = 0xE5u;
@@ -286,7 +251,6 @@ private:
     static constexpr std::size_t FixedWireHeaderBytes = 10u;
 
     struct InterfaceRecord { IRadio* Radio = nullptr; };
-
     struct WireHeader {
         RadioTransferId TransferId = 0;
         uint8_t FragmentIndex = 0;
@@ -295,7 +259,6 @@ private:
         RadioAddress Source{};
         std::size_t EncodedBytes = 0;
     };
-
     using ByteBuffer = System::Memory::ByteVector<System::Memory::MemoryPolicy::ExternalPreferred>;
 
     struct ReassemblyRecord {
@@ -326,11 +289,9 @@ private:
             ReceivedBitmap.fill(0);
             Buffer.clear();
         }
-
         bool HasFragment(uint8_t index) const noexcept {
             return (ReceivedBitmap[index / 8u] & static_cast<uint8_t>(1u << (index % 8u))) != 0;
         }
-
         void MarkFragment(uint8_t index) noexcept {
             ReceivedBitmap[index / 8u] |= static_cast<uint8_t>(1u << (index % 8u));
         }
@@ -357,16 +318,13 @@ private:
     static uint16_t ReadU16(const uint8_t* p) noexcept {
         return static_cast<uint16_t>(p[0]) | (static_cast<uint16_t>(p[1]) << 8u);
     }
-
     static void WriteU16(uint8_t* p, uint16_t value) noexcept {
         p[0] = static_cast<uint8_t>(value & 0xFFu);
         p[1] = static_cast<uint8_t>((value >> 8u) & 0xFFu);
     }
-
     static std::size_t HeaderBytesForAddress(const RadioAddress& address) noexcept {
         return address.IsValid() ? FixedWireHeaderBytes + address.Length : 0;
     }
-
     static bool DecodeHeader(const uint8_t* data, std::size_t size, WireHeader& header) noexcept {
         if (data == nullptr || size < FixedWireHeaderBytes) return false;
         if (data[0] != WireMagic0 || data[1] != WireMagic1 || data[2] != WireVersion) return false;
@@ -381,7 +339,6 @@ private:
         header.Source = RadioAddress::FromBytes(data + FixedWireHeaderBytes, sourceLength);
         return header.TransferId != 0 && header.FragmentCount != 0 && header.FragmentIndex < header.FragmentCount && header.Source.IsValid();
     }
-
     static void EncodeHeader(uint8_t* data, const WireHeader& header) noexcept {
         data[0] = WireMagic0;
         data[1] = WireMagic1;
@@ -393,30 +350,25 @@ private:
         data[9] = header.Source.Length;
         std::memcpy(data + FixedWireHeaderBytes, header.Source.Bytes.data(), header.Source.Length);
     }
-
     static std::size_t FragmentPayloadBytes(const IRadio& radio, const RadioAddress& source) noexcept {
         const std::size_t headerBytes = HeaderBytesForAddress(source);
         const std::size_t mtu = radio.Capabilities().MaximumPayloadBytes;
         return headerBytes == 0 || mtu <= headerBytes ? 0 : mtu - headerBytes;
     }
-
     InterfaceRecord* FindInterface(IRadio& radio) noexcept {
         for (auto& record : _interfaces) if (record.Radio == &radio) return &record;
         return nullptr;
     }
-
     const InterfaceRecord* FindInterface(const IRadio& radio) const noexcept {
         for (const auto& record : _interfaces) if (record.Radio == &radio) return &record;
         return nullptr;
     }
-
     bool WasRecentlyDelivered(IRadio& radio, const RadioAddress& source, RadioTransferId transferId) const noexcept {
         for (const auto& recent : _recent) {
             if (recent.Used && recent.Radio == &radio && recent.TransferId == transferId && recent.Source == source) return true;
         }
         return false;
     }
-
     void RememberDelivered(IRadio& radio, const RadioAddress& source, RadioTransferId transferId) noexcept {
         auto& slot = _recent[_recentCursor];
         slot.Used = true;
@@ -425,14 +377,12 @@ private:
         slot.TransferId = transferId;
         _recentCursor = (_recentCursor + 1u) % _recent.size();
     }
-
     ReassemblyRecord* FindReassembly(IRadio& radio, const RadioAddress& source, RadioTransferId transferId) noexcept {
         for (auto& record : _reassemblies) {
             if (record.Used && record.Radio == &radio && record.TransferId == transferId && record.Source == source) return &record;
         }
         return nullptr;
     }
-
     ReassemblyRecord* AllocateReassembly() noexcept {
         for (auto& record : _reassemblies) if (!record.Used) return &record;
         ReassemblyRecord* oldest = &_reassemblies[0];
@@ -440,7 +390,6 @@ private:
         oldest->Reset();
         return oldest;
     }
-
     RadioTransferId NextTransferId() noexcept {
         RadioTransferId result = _nextTransferId++;
         if (result == 0) result = _nextTransferId++;
@@ -453,7 +402,6 @@ public:
     RadioTransport(const RadioTransport&) = delete;
     RadioTransport& operator=(const RadioTransport&) = delete;
 
-    /// <summary>Returns the finite maximum complete logical transfer accepted for one interface.</summary>
     std::size_t MaximumLogicalTransferSize(const IRadio& radio) const noexcept {
         const RadioAddress source = radio.LocalAddress();
         const std::size_t chunk = FragmentPayloadBytes(radio, source);
@@ -464,7 +412,6 @@ public:
         return maximum;
     }
 
-    /// <summary>Registers one physical/link Radio interface with this logical-transfer service.</summary>
     bool AddInterface(IRadio& radio) noexcept {
         if (!radio.LocalAddress().IsValid()) return false;
         if (FindInterface(radio) != nullptr) return true;
@@ -477,19 +424,12 @@ public:
         return false;
     }
 
-    /// <summary>Removes a Radio interface and invalidates every peer handle/reassembly owned by it.</summary>
     bool RemoveInterface(IRadio& radio) noexcept {
         auto* record = FindInterface(radio);
         if (record == nullptr) return false;
         _peers.ForEach([&](RadioPeerHandle peer, const RadioPeerBinding& binding) {
             if (binding.Interface == &radio) {
-                _observers.NotifyPeerInvalidated(
-                    *this,
-                    radio,
-                    peer,
-                    binding.Address,
-                    RadioPeerInvalidationReason::InterfaceRemoved
-                );
+                _observers.NotifyPeerInvalidated(*this, radio, peer, binding.Address, RadioPeerInvalidationReason::InterfaceRemoved);
             }
         });
         record->Radio = nullptr;
@@ -500,7 +440,6 @@ public:
         return true;
     }
 
-    /// <summary>Starts all registered Radio interfaces and enables logical transfer.</summary>
     bool Start() {
         if (_started) return true;
         for (const auto& record : _interfaces) {
@@ -517,19 +456,13 @@ public:
         return true;
     }
 
-    /// <summary>Stops logical transfer, invalidates ephemeral peer handles and stops all registered Radio interfaces.</summary>
     void Stop() noexcept {
         if (!_started) return;
         _started = false;
         _peers.ForEach([&](RadioPeerHandle peer, const RadioPeerBinding& binding) {
             if (binding.Interface != nullptr) {
                 _observers.NotifyPeerInvalidated(
-                    *this,
-                    *binding.Interface,
-                    peer,
-                    binding.Address,
-                    RadioPeerInvalidationReason::TransportStopped
-                );
+                    *this, *binding.Interface, peer, binding.Address, RadioPeerInvalidationReason::TransportStopped);
             }
         });
         _peers.Clear();
@@ -542,36 +475,20 @@ public:
     bool IsStarted() const noexcept { return _started; }
     void SetReceiver(IRadioTransportReceiver* receiver) noexcept { _receiver = receiver; }
     RadioTransportObserverSubscriptions& Observers() noexcept { return _observers; }
-
-    /// <summary>Gets the Radio-owned peer registry used by this transport for direct-peer resolution.</summary>
     RadioPeerRegistry<>& Peers() noexcept { return _peers; }
     const RadioPeerRegistry<>& Peers() const noexcept { return _peers; }
 
-    /// <summary>Invalidates one exact current Radio peer and emits its lifecycle notification.</summary>
     bool InvalidatePeer(RadioPeerHandle peer) noexcept {
         const auto* binding = _peers.Resolve(peer);
         if (binding == nullptr || !binding->IsValid()) return false;
         IRadio* radio = binding->Interface;
         const RadioAddress address = binding->Address;
         if (!_peers.Invalidate(peer)) return false;
-        _observers.NotifyPeerInvalidated(
-            *this,
-            *radio,
-            peer,
-            address,
-            RadioPeerInvalidationReason::Explicit
-        );
+        _observers.NotifyPeerInvalidated(*this, *radio, peer, address, RadioPeerInvalidationReason::Explicit);
         return true;
     }
 
-    /// <summary>
-    /// Sends one complete immutable opaque unicast transfer to a current Radio-owned peer handle.
-    /// </summary>
-    RadioTransportSendResult Send(
-        RadioPeerHandle peer,
-        const uint8_t* payload,
-        std::size_t payloadSize
-    ) {
+    RadioTransportSendResult Send(RadioPeerHandle peer, const uint8_t* payload, std::size_t payloadSize) {
         const auto* binding = _peers.Resolve(peer);
         if (binding == nullptr || !binding->IsValid()) {
             return {RadioTransportSendStatus::InvalidPeer, {RadioSendStatus::InvalidAddress, 0}};
@@ -579,13 +496,6 @@ public:
         return Send(*binding->Interface, binding->Address, payload, payloadSize);
     }
 
-    /// <summary>
-    /// Sends one complete immutable opaque logical transfer over an explicitly selected provider endpoint.
-    /// </summary>
-    /// <remarks>
-    /// Higher layers should normally use the RadioPeerHandle overload for direct unicast. This address form remains
-    /// for Radio-owned broadcast/provider mechanics and integrations that are themselves responsible for peer creation.
-    /// </remarks>
     RadioTransportSendResult Send(
         IRadio& radio,
         const RadioAddress& destination,
@@ -622,6 +532,10 @@ public:
             return complete({RadioTransportSendStatus::RadioRejected, {RadioSendStatus::NoMemory, 0}});
         }
 
+        bool allTransmissionsCompleted = true;
+        bool allPeerAcknowledged = true;
+        bool acknowledgementUnavailable = false;
+
         for (uint8_t index = 0; index < fragmentCount; ++index) {
             const std::size_t offset = static_cast<std::size_t>(index) * chunk;
             const std::size_t remaining = payloadSize > offset ? payloadSize - offset : 0;
@@ -638,15 +552,26 @@ public:
             if (fragmentBytes != 0) std::memcpy(frame.data() + headerBytes, payload + offset, fragmentBytes);
             const auto linkResult = radio.Send(destination, frame.data(), headerBytes + fragmentBytes);
             if (!linkResult) return complete({RadioTransportSendStatus::RadioRejected, linkResult});
+
+            allTransmissionsCompleted = allTransmissionsCompleted && linkResult.Evidence.TransmissionCompleted();
+            allPeerAcknowledged = allPeerAcknowledged && linkResult.Evidence.PeerAcknowledged();
+            acknowledgementUnavailable = acknowledgementUnavailable ||
+                linkResult.Evidence.PeerAcknowledgement == RadioPeerAcknowledgement::Unavailable;
         }
 
-        return complete({RadioTransportSendStatus::Accepted, RadioSendResult::Accepted()});
+        RadioDirectLinkEvidence aggregate{};
+        if (allTransmissionsCompleted) aggregate.Transmission = RadioTransmissionCompletion::Completed;
+        if (allPeerAcknowledged) {
+            aggregate.PeerAcknowledgement = RadioPeerAcknowledgement::Acknowledged;
+        } else if (acknowledgementUnavailable) {
+            aggregate.PeerAcknowledgement = RadioPeerAcknowledgement::Unavailable;
+        } else {
+            aggregate.PeerAcknowledgement = RadioPeerAcknowledgement::Unknown;
+        }
+
+        return complete({RadioTransportSendStatus::Accepted, RadioSendResult::Accepted(aggregate)});
     }
 
-    /// <summary>
-    /// Consumes one physical packet on the Radio worker context and advances bounded reassembly.
-    /// This is an internal Radio-layer operation and never performs Mesh routing or authentication.
-    /// </summary>
     void ProcessInboundPacket(IRadio& radio, const RadioPacketView& packet) {
         if (!_started || FindInterface(radio) == nullptr) return;
         if (!packet.Destination.IsValid()) return;
@@ -709,7 +634,6 @@ public:
         if (peerResult == RadioPeerObserveResult::Invalid ||
             peerResult == RadioPeerObserveResult::ResourceUnavailable ||
             !sourcePeer) {
-            // Do not commit recent-transfer suppression: a later retry may succeed after peer resources become available.
             record->Reset();
             return;
         }
