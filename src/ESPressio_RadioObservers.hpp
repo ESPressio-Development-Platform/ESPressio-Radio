@@ -149,19 +149,6 @@ public:
     ) noexcept {
         try { _dispatcher->NotifySendAttempted(radio, destination, payloadSize, result); } catch (...) {}
     }
-
-    /// <summary>
-    /// Provider-side compatibility hook while concrete propagation branches migrate to NotifySendAttempted.
-    /// Semantics are Send-attempt return only; the name must not be exposed as a consumer completion contract.
-    /// </summary>
-    void NotifySendCompleted(
-        IRadio& radio,
-        const RadioAddress& destination,
-        std::size_t payloadSize,
-        const RadioSendResult& result
-    ) noexcept {
-        NotifySendAttempted(radio, destination, payloadSize, result);
-    }
 };
 
 } // namespace ESPressio::Radio
