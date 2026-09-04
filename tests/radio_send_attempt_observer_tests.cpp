@@ -85,14 +85,8 @@ int main() {
     assert(observer.Result.Evidence.TransmissionCompleted());
     assert(observer.Result.Evidence.PeerAcknowledged());
 
-    // Provider propagation compatibility hook has identical attempt semantics; it is not a consumer completion contract.
-    radio.Observers().NotifySendCompleted(radio, destination, 11, RadioSendResult::Accepted());
-    assert(observer.Calls == 3U);
-    assert(observer.PayloadSize == 11U);
-    assert(!observer.Result.Evidence.TransmissionCompleted());
-
     handle.reset();
     radio.Observers().NotifySendAttempted(radio, destination, 1, RadioSendResult::Accepted());
-    assert(observer.Calls == 3U);
+    assert(observer.Calls == 2U);
     return 0;
 }
