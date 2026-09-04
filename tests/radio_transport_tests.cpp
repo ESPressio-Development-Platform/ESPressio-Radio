@@ -161,7 +161,7 @@ public:
         LastPeerAddress = address;
         LastInvalidationReason = reason;
     }
-    void OnRadioTransportSendCompleted(
+    void OnRadioTransportSendAttempted(
         RadioTransport&,
         IRadio&,
         const RadioAddress&,
