@@ -63,14 +63,19 @@ private:
     }
 };
 
-class RadioSendCompletedEvent final : public TypedEvent<RadioSendCompletedEvent> {
+/// <summary>Event emitted after one concrete-radio Send attempt returns.</summary>
+/// <remarks>
+/// This event is not a transmission-completion event. `Result.Evidence` contains any stronger direct-link fact the
+/// provider could synchronously prove; technologies without such proof leave completion/acknowledgement unknown.
+/// </remarks>
+class RadioSendAttemptedEvent final : public TypedEvent<RadioSendAttemptedEvent> {
 public:
     const RadioEventSourceSnapshot Radio;
     const Radio::RadioAddress Destination;
     const std::size_t PayloadSize;
     const Radio::RadioSendResult Result;
 
-    RadioSendCompletedEvent(
+    RadioSendAttemptedEvent(
         Radio::IRadio& radio,
         const Radio::RadioAddress& destination,
         std::size_t payloadSize,
@@ -99,14 +104,18 @@ public:
 };
 
 /// <summary>Event emitted after RadioTransport attempts a complete direct-link logical transfer.</summary>
-class RadioTransportSendCompletedEvent final : public TypedEvent<RadioTransportSendCompletedEvent> {
+/// <remarks>
+/// The result is the synchronous transport-attempt result. `Result.LinkResult.Evidence` must be inspected before
+/// interpreting transmission completion or peer acknowledgement.
+/// </remarks>
+class RadioTransportSendAttemptedEvent final : public TypedEvent<RadioTransportSendAttemptedEvent> {
 public:
     const RadioEventSourceSnapshot Radio;
     const Radio::RadioAddress Destination;
     const std::size_t PayloadSize;
     const Radio::RadioTransportSendResult Result;
 
-    RadioTransportSendCompletedEvent(
+    RadioTransportSendAttemptedEvent(
         Radio::IRadio& radio,
         const Radio::RadioAddress& destination,
         std::size_t payloadSize,
