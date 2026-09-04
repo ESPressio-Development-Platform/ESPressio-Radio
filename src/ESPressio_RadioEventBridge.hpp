@@ -105,7 +105,7 @@ public:
         (new RadioInterfaceRemovedEvent(radio))->Queue();
     }
 
-    void OnRadioTransportSendCompleted(
+    void OnRadioTransportSendAttempted(
         Radio::RadioTransport&,
         Radio::IRadio& radio,
         const Radio::RadioAddress& destination,
