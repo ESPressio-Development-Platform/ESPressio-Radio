@@ -28,6 +28,10 @@ jobs:
         run: g++ -std=c++17 -Wall -Wextra -Werror -Isrc -Ideps/System/src -Ideps/Observable/src tests/radio_send_attempt_observer_tests.cpp -o radio_send_attempt_observer_tests -pthread
       - name: Run send-attempt observer tests
         run: ./radio_send_attempt_observer_tests
+      - name: Build deferred-transmission tests
+        run: g++ -std=c++17 -Wall -Wextra -Werror -Isrc -Ideps/System/src -Ideps/Observable/src tests/radio_deferred_transmission_tests.cpp -o radio_deferred_transmission_tests -pthread
+      - name: Run deferred-transmission tests
+        run: ./radio_deferred_transmission_tests
       - name: Build peer registry tests
         run: g++ -std=c++17 -Wall -Wextra -Werror -Isrc -Ideps/System/src -Ideps/Observable/src tests/radio_peer_registry_tests.cpp -o radio_peer_registry_tests -pthread
       - name: Run peer registry tests
