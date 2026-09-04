@@ -21,7 +21,7 @@ namespace ESPressio::Event {
 class RadioEventBridge final :
     public Radio::IRadioLifecycleObserver,
     public Radio::IRadioPacketObserver,
-    public Radio::IRadioSendObserver,
+    public Radio::IRadioSendAttemptObserver,
     public Radio::IRadioTransportLifecycleObserver,
     public Radio::IRadioTransportInterfaceObserver,
     public Radio::IRadioTransportMessageObserver {
@@ -40,13 +40,13 @@ public:
     RadioEventBridge(RadioEventBridge&&) = delete;
     RadioEventBridge& operator=(RadioEventBridge&&) = delete;
 
-    /// <summary>Subscribes this bridge to one concrete radio's lifecycle, packet and send observer surfaces.</summary>
+    /// <summary>Subscribes this bridge to one concrete radio's lifecycle, packet and send-attempt surfaces.</summary>
     bool Subscribe(Radio::IRadio& radio) {
         try {
             auto handle = radio.Observers().Subscribe<
                 Radio::IRadioLifecycleObserver,
                 Radio::IRadioPacketObserver,
-                Radio::IRadioSendObserver
+                Radio::IRadioSendAttemptObserver
             >(this);
             if (!handle) return false;
             _handles.emplace_back(std::move(handle));
@@ -85,13 +85,13 @@ public:
         (new RadioPacketReceivedEvent(radio, packet))->Queue();
     }
 
-    void OnRadioSendCompleted(
+    void OnRadioSendAttempted(
         Radio::IRadio& radio,
         const Radio::RadioAddress& destination,
         std::size_t payloadSize,
         const Radio::RadioSendResult& result
     ) override {
-        (new RadioSendCompletedEvent(radio, destination, payloadSize, result))->Queue();
+        (new RadioSendAttemptedEvent(radio, destination, payloadSize, result))->Queue();
     }
 
     void OnRadioTransportStarted(Radio::RadioTransport&) override { (new RadioTransportStartedEvent())->Queue(); }
@@ -112,7 +112,7 @@ public:
         std::size_t payloadSize,
         const Radio::RadioTransportSendResult& result
     ) override {
-        (new RadioTransportSendCompletedEvent(radio, destination, payloadSize, result))->Queue();
+        (new RadioTransportSendAttemptedEvent(radio, destination, payloadSize, result))->Queue();
     }
 
     void OnRadioTransportMessageReceived(
