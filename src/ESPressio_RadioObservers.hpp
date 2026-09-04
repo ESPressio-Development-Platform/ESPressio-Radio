@@ -44,6 +44,24 @@ public:
     ) = 0;
 };
 
+/// <summary>Observes one terminal outcome for a previously accepted deferred packet transmission.</summary>
+/// <remarks>
+/// The handle must be the valid provider-local DeferredTransmission returned by the corresponding Send call. Providers
+/// emit exactly one terminal observation for a promised handle. Evidence must be terminal; this callback is never an
+/// admission/submission notification. It does not imply Mesh end-to-end delivery.
+/// </remarks>
+class IRadioTransmissionObserver : public virtual Observable::IObserver {
+public:
+    virtual ~IRadioTransmissionObserver() = default;
+    virtual void OnRadioTransmissionResolved(
+        IRadio& radio,
+        RadioTransmissionHandle transmission,
+        const RadioAddress& destination,
+        std::size_t payloadSize,
+        const RadioDirectLinkEvidence& evidence
+    ) = 0;
+};
+
 /// <summary>
 /// RAII observer-subscription surface shared by all ESPressio Radio concretes.
 /// Subscriptions are supplemental observations and do not replace the radio's transport receiver.
@@ -90,6 +108,22 @@ private:
                 );
             });
         }
+
+        void NotifyTransmissionResolved(
+            IRadio& radio,
+            RadioTransmissionHandle transmission,
+            const RadioAddress& destination,
+            std::size_t payloadSize,
+            const RadioDirectLinkEvidence& evidence
+        ) {
+            ExecuteNotification([&](NotificationContext& notification) {
+                notification.WithObservers<IRadioTransmissionObserver>(
+                    [&](IRadioTransmissionObserver* observer) {
+                        observer->OnRadioTransmissionResolved(radio, transmission, destination, payloadSize, evidence);
+                    }
+                );
+            });
+        }
     };
 
     System::Memory::SharedPtr<Dispatcher> _dispatcher;
@@ -122,24 +156,19 @@ public:
         return _dispatcher->IsObserverRegistered(observer);
     }
 
-    /// <summary>Emits a supplemental observer callback without allowing subscriber failures to alter transport mechanics.</summary>
     void NotifyStarted(IRadio& radio) noexcept {
         try { _dispatcher->NotifyStarted(radio); } catch (...) {}
     }
 
-    /// <summary>Emits a supplemental observer callback without allowing subscriber failures to alter transport mechanics.</summary>
     void NotifyStopped(IRadio& radio) noexcept {
         try { _dispatcher->NotifyStopped(radio); } catch (...) {}
     }
 
-    /// <summary>Emits a supplemental observer callback without allowing subscriber failures to alter transport mechanics.</summary>
     void NotifyPacketReceived(IRadio& radio, const RadioPacketView& packet) noexcept {
         try { _dispatcher->NotifyPacketReceived(radio, packet); } catch (...) {}
     }
 
-    /// <summary>
-    /// Emits the synchronous Send-attempt result. Accepted without completion evidence remains admission only.
-    /// </summary>
+    /// <summary>Emits the synchronous Send-attempt result. Accepted without completion evidence remains admission only.</summary>
     void NotifySendAttempted(
         IRadio& radio,
         const RadioAddress& destination,
@@ -147,6 +176,18 @@ public:
         const RadioSendResult& result
     ) noexcept {
         try { _dispatcher->NotifySendAttempted(radio, destination, payloadSize, result); } catch (...) {}
+    }
+
+    /// <summary>Publishes exactly one terminal outcome for a valid deferred transmission handle.</summary>
+    void NotifyTransmissionResolved(
+        IRadio& radio,
+        RadioTransmissionHandle transmission,
+        const RadioAddress& destination,
+        std::size_t payloadSize,
+        const RadioDirectLinkEvidence& evidence
+    ) noexcept {
+        if (!transmission || !evidence.IsTerminal()) return;
+        try { _dispatcher->NotifyTransmissionResolved(radio, transmission, destination, payloadSize, evidence); } catch (...) {}
     }
 };
 
