@@ -109,7 +109,7 @@ public:
         std::size_t payloadSize
     ) override {
         const auto complete = [&](RadioSendResult result) {
-            _observers.NotifySendCompleted(*this, destination, payloadSize, result);
+            _observers.NotifySendAttempted(*this, destination, payloadSize, result);
             return result;
         };
         if (!_started) return complete({RadioSendStatus::NotStarted, 0});
@@ -193,7 +193,6 @@ static void TestFourTimestampExchangeAtNrf24Mtu() {
 }
 
 static void TestSourceLessRadioUsesEmbeddedRequesterAddress() {
-    // Both receivers hide the sender address, matching the current nRF24 receive contract.
     FakeClockRadio clientRadio(0xA4, false, 32, false);
     FakeClockRadio referenceRadio(0xB4, false, 32, false);
     clientRadio.Connect(referenceRadio);
