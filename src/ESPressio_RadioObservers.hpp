@@ -27,11 +27,11 @@ public:
     virtual void OnRadioPacketReceived(IRadio& radio, const RadioPacketView& packet) = 0;
 };
 
-/// <summary>Observes the synchronous return of one concrete-radio Send attempt.</summary>
+/// <summary>Observes the synchronous return of a concrete packet-radio Send attempt.</summary>
 /// <remarks>
-/// This callback reports that Send has returned. It does not itself mean that RF/link transmission completed or that a
-/// peer acknowledged anything. `RadioSendResult::Evidence` is the sole qualified statement of those facts and remains
-/// Unknown/Unavailable when the concrete technology cannot prove them at Send-return time.
+/// This callback reports submission/admission and any stronger direct-link evidence already established before Send
+/// returned. An Accepted result with unknown transmission completion is not a transmission-completion notification and
+/// must never be interpreted as peer delivery.
 /// </remarks>
 class IRadioSendAttemptObserver : public virtual Observable::IObserver {
 public:
@@ -138,8 +138,7 @@ public:
     }
 
     /// <summary>
-    /// Emits the synchronous Send-attempt observation. The callback name deliberately does not imply transmission
-    /// completion; consumers must inspect RadioSendResult::Evidence for any stronger fact.
+    /// Emits the synchronous Send-attempt result. Accepted without completion evidence remains admission only.
     /// </summary>
     void NotifySendAttempted(
         IRadio& radio,
