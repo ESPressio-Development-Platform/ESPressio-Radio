@@ -66,6 +66,23 @@ struct RadioPeerHandle final {
 };
 static_assert(sizeof(RadioPeerHandle) == 4, "RadioPeerHandle must remain a compact slot+generation value.");
 
+/// <summary>
+/// Provider-owned correlation handle for one accepted packet transmission whose terminal direct-link outcome is deferred.
+/// </summary>
+/// <remarks>
+/// Zero is invalid. A valid handle has meaning only for the IRadio instance which issued it and remains valid only until
+/// that provider publishes the corresponding terminal transmission observation. It carries no Mesh identity or routing
+/// semantics.
+/// </remarks>
+struct RadioTransmissionHandle final {
+    std::uint32_t Value{0};
+    constexpr bool IsValid() const noexcept { return Value != 0U; }
+    constexpr explicit operator bool() const noexcept { return IsValid(); }
+    constexpr bool operator==(const RadioTransmissionHandle& other) const noexcept { return Value == other.Value; }
+    constexpr bool operator!=(const RadioTransmissionHandle& other) const noexcept { return !(*this == other); }
+};
+static_assert(sizeof(RadioTransmissionHandle) == 4, "RadioTransmissionHandle must remain a compact provider-local value.");
+
 enum class RadioCapability : uint32_t {
     None = 0,
     Broadcast = 1u << 0,
@@ -122,10 +139,11 @@ struct RadioPacketView {
     RadioPacketFlag Flags = RadioPacketFlag::None;
 };
 
-/// <summary>Whether a provider can prove that an accepted packet transmission actually completed.</summary>
+/// <summary>Terminal knowledge a provider has established for an accepted packet transmission.</summary>
 enum class RadioTransmissionCompletion : uint8_t {
     Unknown,
-    Completed
+    Completed,
+    Failed
 };
 
 /// <summary>Qualified peer-acknowledgement evidence for one completed direct-link transmission.</summary>
@@ -141,8 +159,9 @@ enum class RadioPeerAcknowledgement : uint8_t {
 /// <remarks>
 /// Evidence is deliberately separate from admission. An Accepted send with Unknown completion means only that the
 /// provider accepted/submitted the packet. Completed means the provider can prove physical/link transmission completed.
-/// Acknowledged is stronger still and is valid only when the technology obtained a peer/link acknowledgement. Absence of
-/// acknowledgement support is Unavailable, never silently treated as failure or success.
+/// Failed is a terminal provider observation after earlier acceptance. Acknowledged is stronger still and is valid only
+/// when the technology obtained a peer/link acknowledgement. Absence of acknowledgement support is Unavailable, never
+/// silently treated as failure or success.
 /// </remarks>
 struct RadioDirectLinkEvidence final {
     RadioTransmissionCompletion Transmission{RadioTransmissionCompletion::Unknown};
@@ -150,6 +169,12 @@ struct RadioDirectLinkEvidence final {
 
     constexpr bool TransmissionCompleted() const noexcept {
         return Transmission == RadioTransmissionCompletion::Completed;
+    }
+    constexpr bool TransmissionFailed() const noexcept {
+        return Transmission == RadioTransmissionCompletion::Failed;
+    }
+    constexpr bool IsTerminal() const noexcept {
+        return Transmission == RadioTransmissionCompletion::Completed || Transmission == RadioTransmissionCompletion::Failed;
     }
     constexpr bool PeerAcknowledged() const noexcept {
         return PeerAcknowledgement == RadioPeerAcknowledgement::Acknowledged;
@@ -160,6 +185,9 @@ struct RadioDirectLinkEvidence final {
     }
     static constexpr RadioDirectLinkEvidence CompletedAndAcknowledged() noexcept {
         return {RadioTransmissionCompletion::Completed, RadioPeerAcknowledgement::Acknowledged};
+    }
+    static constexpr RadioDirectLinkEvidence Failed() noexcept {
+        return {RadioTransmissionCompletion::Failed, RadioPeerAcknowledgement::Unknown};
     }
 };
 
@@ -175,14 +203,23 @@ enum class RadioSendStatus : uint8_t {
 };
 
 /// <summary>Immediate admission/result plus any direct-link evidence synchronously established by the provider.</summary>
+/// <remarks>
+/// Accepted with terminal Evidence needs no deferred handle. Accepted with non-terminal Evidence may carry a valid
+/// DeferredTransmission handle; if it does, the provider must later publish exactly one terminal observation for that
+/// handle. An invalid handle means no stronger deferred evidence has been promised.
+/// </remarks>
 struct RadioSendResult {
     RadioSendStatus Status = RadioSendStatus::NativeFailure;
     int32_t NativeError = 0;
     RadioDirectLinkEvidence Evidence{};
+    RadioTransmissionHandle DeferredTransmission{};
 
     constexpr explicit operator bool() const noexcept { return Status == RadioSendStatus::Accepted; }
-    static constexpr RadioSendResult Accepted(RadioDirectLinkEvidence evidence = {}) noexcept {
-        return {RadioSendStatus::Accepted, 0, evidence};
+    static constexpr RadioSendResult Accepted(
+        RadioDirectLinkEvidence evidence = {},
+        RadioTransmissionHandle deferredTransmission = {}
+    ) noexcept {
+        return {RadioSendStatus::Accepted, 0, evidence, deferredTransmission};
     }
 };
 
