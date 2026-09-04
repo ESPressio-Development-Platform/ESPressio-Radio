@@ -113,16 +113,16 @@ public:
 };
 
 /// <summary>
-/// Observes completion of the synchronous RadioTransport send attempt and complete inbound logical transfers.
+/// Observes synchronous RadioTransport send-attempt return and complete inbound logical transfers.
 /// </summary>
 /// <remarks>
-/// `OnRadioTransportSendCompleted` means the API attempt returned, not that transmission necessarily completed. Inspect
+/// `OnRadioTransportSendAttempted` means the API attempt returned, not that transmission necessarily completed. Inspect
 /// `result.LinkResult.Evidence` for qualified transmission/acknowledgement evidence.
 /// </remarks>
 class IRadioTransportMessageObserver : public virtual Observable::IObserver {
 public:
     virtual ~IRadioTransportMessageObserver() = default;
-    virtual void OnRadioTransportSendCompleted(
+    virtual void OnRadioTransportSendAttempted(
         RadioTransport& transport,
         IRadio& radio,
         const RadioAddress& destination,
@@ -184,7 +184,7 @@ private:
                     });
             });
         }
-        void SendCompleted(
+        void SendAttempted(
             RadioTransport& transport,
             IRadio& radio,
             const RadioAddress& destination,
@@ -194,7 +194,7 @@ private:
             ExecuteNotification([&](NotificationContext& n) {
                 n.WithObservers<IRadioTransportMessageObserver>(
                     [&](IRadioTransportMessageObserver* o) {
-                        o->OnRadioTransportSendCompleted(transport, radio, destination, payloadSize, result);
+                        o->OnRadioTransportSendAttempted(transport, radio, destination, payloadSize, result);
                     });
             });
         }
@@ -235,8 +235,8 @@ public:
     ) noexcept {
         try { _dispatcher->PeerInvalidated(t, r, p, a, reason); } catch (...) {}
     }
-    void NotifySendCompleted(RadioTransport& t, IRadio& r, const RadioAddress& d, std::size_t s, const RadioTransportSendResult& result) noexcept {
-        try { _dispatcher->SendCompleted(t, r, d, s, result); } catch (...) {}
+    void NotifySendAttempted(RadioTransport& t, IRadio& r, const RadioAddress& d, std::size_t s, const RadioTransportSendResult& result) noexcept {
+        try { _dispatcher->SendAttempted(t, r, d, s, result); } catch (...) {}
     }
     void NotifyMessageReceived(RadioTransport& t, IRadio& r, const RadioTransportMessageView& m) noexcept {
         try { _dispatcher->MessageReceived(t, r, m); } catch (...) {}
@@ -503,7 +503,7 @@ public:
         std::size_t payloadSize
     ) {
         const auto complete = [&](RadioTransportSendResult result) {
-            _observers.NotifySendCompleted(*this, radio, destination, payloadSize, result);
+            _observers.NotifySendAttempted(*this, radio, destination, payloadSize, result);
             return result;
         };
 
