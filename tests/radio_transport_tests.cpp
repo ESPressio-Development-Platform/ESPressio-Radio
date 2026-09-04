@@ -46,7 +46,7 @@ public:
 
     RadioSendResult Send(const RadioAddress& destination, const uint8_t* payload, std::size_t size) override {
         const auto complete = [&](RadioSendResult result) {
-            _observers.NotifySendCompleted(*this, destination, size, result);
+            _observers.NotifySendAttempted(*this, destination, size, result);
             return result;
         };
         if (!_started) return complete({RadioSendStatus::NotStarted, 0});
@@ -115,12 +115,12 @@ public:
 class LinkObserver final :
     public IRadioLifecycleObserver,
     public IRadioPacketObserver,
-    public IRadioSendObserver {
+    public IRadioSendAttemptObserver {
 public:
     void OnRadioStarted(IRadio&) override { ++Started; }
     void OnRadioStopped(IRadio&) override { ++Stopped; }
     void OnRadioPacketReceived(IRadio&, const RadioPacketView&) override { ++Received; }
-    void OnRadioSendCompleted(IRadio&, const RadioAddress&, std::size_t, const RadioSendResult& result) override {
+    void OnRadioSendAttempted(IRadio&, const RadioAddress&, std::size_t, const RadioSendResult& result) override {
         ++Sent;
         LastSendAccepted = static_cast<bool>(result);
     }
@@ -198,7 +198,7 @@ static void TestFragmentedDirectLinkDeliveryAndObservers() {
 
     LinkObserver linkA;
     LinkObserver linkB;
-    auto linkARegistration = radioA.Observers().Subscribe<IRadioLifecycleObserver, IRadioSendObserver>(&linkA);
+    auto linkARegistration = radioA.Observers().Subscribe<IRadioLifecycleObserver, IRadioSendAttemptObserver>(&linkA);
     auto linkBRegistration = radioB.Observers().Subscribe<IRadioLifecycleObserver, IRadioPacketObserver>(&linkB);
 
     RadioTransport transportA;
