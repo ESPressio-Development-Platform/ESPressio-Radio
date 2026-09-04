@@ -27,11 +27,16 @@ public:
     virtual void OnRadioPacketReceived(IRadio& radio, const RadioPacketView& packet) = 0;
 };
 
-/// <summary>Observes synchronous send attempts made through a concrete packet radio.</summary>
-class IRadioSendObserver : public virtual Observable::IObserver {
+/// <summary>Observes the synchronous return of one concrete-radio Send attempt.</summary>
+/// <remarks>
+/// This callback reports that Send has returned. It does not itself mean that RF/link transmission completed or that a
+/// peer acknowledged anything. `RadioSendResult::Evidence` is the sole qualified statement of those facts and remains
+/// Unknown/Unavailable when the concrete technology cannot prove them at Send-return time.
+/// </remarks>
+class IRadioSendAttemptObserver : public virtual Observable::IObserver {
 public:
-    virtual ~IRadioSendObserver() = default;
-    virtual void OnRadioSendCompleted(
+    virtual ~IRadioSendAttemptObserver() = default;
+    virtual void OnRadioSendAttempted(
         IRadio& radio,
         const RadioAddress& destination,
         std::size_t payloadSize,
@@ -71,16 +76,16 @@ private:
             });
         }
 
-        void NotifySendCompleted(
+        void NotifySendAttempted(
             IRadio& radio,
             const RadioAddress& destination,
             std::size_t payloadSize,
             const RadioSendResult& result
         ) {
             ExecuteNotification([&](NotificationContext& notification) {
-                notification.WithObservers<IRadioSendObserver>(
-                    [&](IRadioSendObserver* observer) {
-                        observer->OnRadioSendCompleted(radio, destination, payloadSize, result);
+                notification.WithObservers<IRadioSendAttemptObserver>(
+                    [&](IRadioSendAttemptObserver* observer) {
+                        observer->OnRadioSendAttempted(radio, destination, payloadSize, result);
                     }
                 );
             });
@@ -132,14 +137,30 @@ public:
         try { _dispatcher->NotifyPacketReceived(radio, packet); } catch (...) {}
     }
 
-    /// <summary>Emits a supplemental observer callback without allowing subscriber failures to alter transport mechanics.</summary>
+    /// <summary>
+    /// Emits the synchronous Send-attempt observation. The callback name deliberately does not imply transmission
+    /// completion; consumers must inspect RadioSendResult::Evidence for any stronger fact.
+    /// </summary>
+    void NotifySendAttempted(
+        IRadio& radio,
+        const RadioAddress& destination,
+        std::size_t payloadSize,
+        const RadioSendResult& result
+    ) noexcept {
+        try { _dispatcher->NotifySendAttempted(radio, destination, payloadSize, result); } catch (...) {}
+    }
+
+    /// <summary>
+    /// Provider-side compatibility hook while concrete propagation branches migrate to NotifySendAttempted.
+    /// Semantics are Send-attempt return only; the name must not be exposed as a consumer completion contract.
+    /// </summary>
     void NotifySendCompleted(
         IRadio& radio,
         const RadioAddress& destination,
         std::size_t payloadSize,
         const RadioSendResult& result
     ) noexcept {
-        try { _dispatcher->NotifySendCompleted(radio, destination, payloadSize, result); } catch (...) {}
+        NotifySendAttempted(radio, destination, payloadSize, result);
     }
 };
 
