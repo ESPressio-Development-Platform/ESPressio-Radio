@@ -20,6 +20,10 @@ jobs:
         run: g++ -std=c++17 -Wall -Wextra -Werror -Isrc -Ideps/System/src -Ideps/Observable/src tests/radio_transport_tests.cpp -o radio_transport_tests -pthread
       - name: Run transport tests
         run: ./radio_transport_tests
+      - name: Build direct-link evidence tests
+        run: g++ -std=c++17 -Wall -Wextra -Werror -Isrc -Ideps/System/src -Ideps/Observable/src tests/radio_direct_link_evidence_tests.cpp -o radio_direct_link_evidence_tests -pthread
+      - name: Run direct-link evidence tests
+        run: ./radio_direct_link_evidence_tests
       - name: Build peer registry tests
         run: g++ -std=c++17 -Wall -Wextra -Werror -Isrc -Ideps/System/src -Ideps/Observable/src tests/radio_peer_registry_tests.cpp -o radio_peer_registry_tests -pthread
       - name: Run peer registry tests
