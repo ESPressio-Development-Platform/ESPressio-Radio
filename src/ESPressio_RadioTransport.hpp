@@ -248,10 +248,13 @@ class RadioTransport final {
     }
 
 public:
+    /// <summary>Build-selected number of simultaneously retained reassemblies.</summary>
+    static constexpr std::size_t ReassemblyCapacity = ESPRESSIO_RADIO_MAX_REASSEMBLIES;
+    /// <summary>Build-selected maximum payload bytes retained by one reassembly.</summary>
+    static constexpr std::size_t LogicalTransferCapacityBytes = ESPRESSIO_RADIO_MAX_LOGICAL_TRANSFER_BYTES;
     /// <summary>Compile-time payload storage retained by all bounded Radio reassembly slots.</summary>
     static constexpr std::size_t ReassemblyPayloadCapacityBytes =
-        static_cast<std::size_t>(ESPRESSIO_RADIO_MAX_REASSEMBLIES) *
-        static_cast<std::size_t>(ESPRESSIO_RADIO_MAX_LOGICAL_TRANSFER_BYTES);
+        ReassemblyCapacity * LogicalTransferCapacityBytes;
 
     RadioTransport() = default;
     /// <summary>Constructs a transport with explicit bounded deferred-correlation storage owned by the composition root.</summary>
