@@ -8,6 +8,13 @@
 
 using namespace ESPressio::Radio;
 
+static_assert(
+    RadioTransport::ReassemblyPayloadCapacityBytes ==
+        static_cast<std::size_t>(ESPRESSIO_RADIO_MAX_REASSEMBLIES) *
+        static_cast<std::size_t>(ESPRESSIO_RADIO_MAX_LOGICAL_TRANSFER_BYTES),
+    "Radio reassembly payload storage must be exactly build-accountable."
+);
+
 class FakeRadio final : public IRadio {
 public:
     explicit FakeRadio(uint8_t addressByte, uint16_t mtu, uint16_t logicalMaximum = 4096)
@@ -414,10 +421,53 @@ static void TestProviderLogicalMaximumIsEnforced() {
     assert(receiver.Payload.size() == maximum.size());
 }
 
+static void TestReassemblySaturationDoesNotEvictActiveTransfer() {
+    FakeRadio radio(0xB4, 16, 64);
+    RadioTransport transport;
+    CaptureReceiver receiver;
+    transport.SetReceiver(&receiver);
+    assert(transport.AddInterface(radio));
+    assert(transport.Start());
+
+    const uint8_t sourceByte = 0xA4;
+    const auto source = RadioAddress::FromBytes(&sourceByte, 1);
+    const auto destination = radio.LocalAddress();
+    const auto submitFragment = [&](uint16_t transfer, uint8_t fragment, const uint8_t* payload, std::size_t size) {
+        std::array<uint8_t, 16> frame{};
+        frame[0] = 0xE5;
+        frame[1] = 0x52;
+        frame[2] = 2;
+        frame[3] = static_cast<uint8_t>(transfer & 0xFFU);
+        frame[4] = static_cast<uint8_t>(transfer >> 8U);
+        frame[5] = fragment;
+        frame[6] = 2;
+        frame[7] = 6;
+        frame[8] = 0;
+        frame[9] = 1;
+        frame[10] = sourceByte;
+        if (size != 0U) std::memcpy(frame.data() + 11, payload, size);
+        const RadioPacketView packet{source, destination, frame.data(), 11U + size, 0, 0, RadioPacketFlag::None};
+        transport.ProcessInboundPacket(radio, packet);
+    };
+
+    const std::array<uint8_t, 5> first{{1, 2, 3, 4, 5}};
+    for (uint16_t transfer = 1; transfer <= ESPRESSIO_RADIO_MAX_REASSEMBLIES; ++transfer) {
+        submitFragment(transfer, 0, first.data(), first.size());
+    }
+
+    // A fifth incomplete transfer is dropped; it must not evict transfer 1.
+    submitFragment(static_cast<uint16_t>(ESPRESSIO_RADIO_MAX_REASSEMBLIES + 1), 0, first.data(), first.size());
+    const uint8_t last = 6;
+    submitFragment(1, 1, &last, 1);
+    assert(receiver.Count == 1);
+    assert((receiver.Payload == std::vector<uint8_t>{1, 2, 3, 4, 5, 6}));
+}
+
 int main() {
     TestFragmentedDirectLinkDeliveryAndObservers();
     TestPeerHandleSendAndGenerationInvalidation();
     TestInterfaceRemovalInvalidatesOwnedPeers();
     TestProviderLogicalMaximumIsEnforced();
+    TestReassemblySaturationDoesNotEvictActiveTransfer();
     return 0;
 }

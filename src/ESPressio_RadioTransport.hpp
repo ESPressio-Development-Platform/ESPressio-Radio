@@ -27,6 +27,12 @@
 #define ESPRESSIO_RADIO_MAX_LOGICAL_TRANSFER_BYTES 4096
 #endif
 
+static_assert(ESPRESSIO_RADIO_MAX_REASSEMBLIES > 0,
+              "Radio reassembly capacity must be explicitly finite and non-zero.");
+static_assert(ESPRESSIO_RADIO_MAX_LOGICAL_TRANSFER_BYTES > 0 &&
+                  ESPRESSIO_RADIO_MAX_LOGICAL_TRANSFER_BYTES <= 0xFFFF,
+              "Radio logical-transfer capacity must be non-zero and fit its 16-bit wire length.");
+
 namespace ESPressio::Radio {
 
 class RadioTransport;
@@ -137,10 +143,9 @@ class RadioTransport final {
     static constexpr std::size_t FixedWireHeaderBytes = 10u;
     struct InterfaceRecord { IRadio* Radio = nullptr; Observable::ObserverHandlePtr DeferredSubscription{}; };
     struct WireHeader { RadioTransferId TransferId = 0; uint8_t FragmentIndex = 0; uint8_t FragmentCount = 0; uint16_t LogicalPayloadBytes = 0; RadioAddress Source{}; std::size_t EncodedBytes = 0; };
-    using ByteBuffer = System::Memory::ByteVector<System::Memory::MemoryPolicy::ExternalPreferred>;
     struct ReassemblyRecord {
-        bool Used = false; IRadio* Radio = nullptr; RadioAddress Source{}; RadioAddress Destination{}; RadioTransferId TransferId = 0; uint8_t FragmentCount = 0; uint16_t LogicalPayloadBytes = 0; uint16_t ReceivedCount = 0; uint32_t Touch = 0; RadioPacketFlag Flags = RadioPacketFlag::None; std::array<uint8_t, 32> ReceivedBitmap{}; ByteBuffer Buffer{};
-        void Reset() { Used = false; Radio = nullptr; Source = {}; Destination = {}; TransferId = 0; FragmentCount = 0; LogicalPayloadBytes = 0; ReceivedCount = 0; Touch = 0; Flags = RadioPacketFlag::None; ReceivedBitmap.fill(0); Buffer.clear(); }
+        bool Used = false; IRadio* Radio = nullptr; RadioAddress Source{}; RadioAddress Destination{}; RadioTransferId TransferId = 0; uint8_t FragmentCount = 0; uint16_t LogicalPayloadBytes = 0; uint16_t ReceivedCount = 0; uint32_t Touch = 0; RadioPacketFlag Flags = RadioPacketFlag::None; std::array<uint8_t, 32> ReceivedBitmap{}; std::array<uint8_t, ESPRESSIO_RADIO_MAX_LOGICAL_TRANSFER_BYTES> Buffer{};
+        void Reset() { Used = false; Radio = nullptr; Source = {}; Destination = {}; TransferId = 0; FragmentCount = 0; LogicalPayloadBytes = 0; ReceivedCount = 0; Touch = 0; Flags = RadioPacketFlag::None; ReceivedBitmap.fill(0); }
         bool HasFragment(uint8_t index) const noexcept { return (ReceivedBitmap[index / 8u] & static_cast<uint8_t>(1u << (index % 8u))) != 0; }
         void MarkFragment(uint8_t index) noexcept { ReceivedBitmap[index / 8u] |= static_cast<uint8_t>(1u << (index % 8u)); }
     };
@@ -180,7 +185,10 @@ class RadioTransport final {
     bool WasRecentlyDelivered(IRadio& radio, const RadioAddress& source, RadioTransferId transferId) const noexcept { for (const auto& recent : _recent) if (recent.Used && recent.Radio == &radio && recent.TransferId == transferId && recent.Source == source) return true; return false; }
     void RememberDelivered(IRadio& radio, const RadioAddress& source, RadioTransferId transferId) noexcept { auto& slot = _recent[_recentCursor]; slot.Used = true; slot.Radio = &radio; slot.Source = source; slot.TransferId = transferId; _recentCursor = (_recentCursor + 1u) % _recent.size(); }
     ReassemblyRecord* FindReassembly(IRadio& radio, const RadioAddress& source, RadioTransferId transferId) noexcept { for (auto& record : _reassemblies) if (record.Used && record.Radio == &radio && record.TransferId == transferId && record.Source == source) return &record; return nullptr; }
-    ReassemblyRecord* AllocateReassembly() noexcept { for (auto& record : _reassemblies) if (!record.Used) return &record; ReassemblyRecord* oldest = &_reassemblies[0]; for (auto& record : _reassemblies) if (record.Touch < oldest->Touch) oldest = &record; oldest->Reset(); return oldest; }
+    ReassemblyRecord* AllocateReassembly() noexcept {
+        for (auto& record : _reassemblies) if (!record.Used) return &record;
+        return nullptr;
+    }
     RadioTransferId NextTransferId() noexcept { RadioTransferId result = _nextTransferId++; if (result == 0) result = _nextTransferId++; if (_nextTransferId == 0) _nextTransferId = 1; return result; }
 
     RadioTransportSendResult SendInternal(RadioPeerHandle peer, IRadio& radio, const RadioAddress& destination, const uint8_t* payload, std::size_t payloadSize) {
@@ -240,6 +248,11 @@ class RadioTransport final {
     }
 
 public:
+    /// <summary>Compile-time payload storage retained by all bounded Radio reassembly slots.</summary>
+    static constexpr std::size_t ReassemblyPayloadCapacityBytes =
+        static_cast<std::size_t>(ESPRESSIO_RADIO_MAX_REASSEMBLIES) *
+        static_cast<std::size_t>(ESPRESSIO_RADIO_MAX_LOGICAL_TRANSFER_BYTES);
+
     RadioTransport() = default;
     /// <summary>Constructs a transport with explicit bounded deferred-correlation storage owned by the composition root.</summary>
     RadioTransport(IDeferredLogicalTransferTracker& tracker, ILogicalTransferTerminalObserver& terminalObserver)
@@ -329,8 +342,9 @@ public:
         if (packet.PayloadSize != header.EncodedBytes + expectedBytes) return;
         ReassemblyRecord* record = FindReassembly(radio, header.Source, header.TransferId);
         if (record == nullptr) {
-            record = AllocateReassembly(); record->Used = true; record->Radio = &radio; record->Source = header.Source; record->Destination = packet.Destination; record->TransferId = header.TransferId; record->FragmentCount = header.FragmentCount; record->LogicalPayloadBytes = header.LogicalPayloadBytes; record->Flags = packet.Flags;
-            try { record->Buffer.resize(header.LogicalPayloadBytes); } catch (...) { record->Reset(); return; }
+            record = AllocateReassembly();
+            if (record == nullptr) return;
+            record->Used = true; record->Radio = &radio; record->Source = header.Source; record->Destination = packet.Destination; record->TransferId = header.TransferId; record->FragmentCount = header.FragmentCount; record->LogicalPayloadBytes = header.LogicalPayloadBytes; record->Flags = packet.Flags;
         } else if (record->FragmentCount != header.FragmentCount || record->LogicalPayloadBytes != header.LogicalPayloadBytes || record->Destination != packet.Destination || HasFlag(record->Flags, RadioPacketFlag::Broadcast) != HasFlag(packet.Flags, RadioPacketFlag::Broadcast)) { record->Reset(); return; }
         record->Touch = ++_touchCounter;
         if (!record->HasFragment(header.FragmentIndex)) { if (expectedBytes != 0) std::memcpy(record->Buffer.data() + offset, packet.Payload + header.EncodedBytes, expectedBytes); record->MarkFragment(header.FragmentIndex); ++record->ReceivedCount; }
@@ -339,7 +353,7 @@ public:
         const auto peerResult = _peers.Observe(radio, record->Source, sourcePeer);
         if (peerResult == RadioPeerObserveResult::Invalid || peerResult == RadioPeerObserveResult::ResourceUnavailable || !sourcePeer) { record->Reset(); return; }
         if (peerResult == RadioPeerObserveResult::Observed) _observers.NotifyPeerObserved(*this, radio, sourcePeer, record->Source);
-        RadioTransportMessageView message{sourcePeer, record->Source, record->Destination, record->TransferId, record->Buffer.empty() ? nullptr : record->Buffer.data(), record->LogicalPayloadBytes, record->Flags};
+        RadioTransportMessageView message{sourcePeer, record->Source, record->Destination, record->TransferId, record->LogicalPayloadBytes == 0U ? nullptr : record->Buffer.data(), record->LogicalPayloadBytes, record->Flags};
         RememberDelivered(radio, record->Source, record->TransferId);
         if (_receiver != nullptr) _receiver->OnRadioTransportMessage(radio, message);
         _observers.NotifyMessageReceived(*this, radio, message);

@@ -184,7 +184,7 @@ All retained RadioTransport cardinalities are bounded. The default compile-time 
 
 `RadioPeerRegistry` is also finite; its default capacity is controlled independently by `ESPRESSIO_RADIO_MAX_PEERS` (currently 32) so technologies/integrations may choose a smaller bound when appropriate.
 
-Each active reassembly may own at most one logical-transfer buffer up to the effective interface maximum. Reassembly payload storage uses `System::Memory::ByteVector<ExternalPreferred>`, so the installed ESPressio-System provider controls its actual memory region. The 256-fragment receipt bitmap is fixed at 32 bytes per reassembly slot.
+Each active reassembly owns one compile-time fixed payload array of `ESPRESSIO_RADIO_MAX_LOGICAL_TRANSFER_BYTES`; no receive-time heap allocation or fallback exists. `RadioTransport::ReassemblyPayloadCapacityBytes` exposes the exact aggregate payload-array capacity (`ESPRESSIO_RADIO_MAX_REASSEMBLIES × ESPRESSIO_RADIO_MAX_LOGICAL_TRANSFER_BYTES`) for whole-device accounting. When every reassembly slot is occupied, a new transfer is dropped without evicting or corrupting an in-progress transfer. The 256-fragment receipt bitmap is fixed at 32 bytes per reassembly slot.
 
 Observable dispatcher ownership is obtained through `System::Memory::MakeShared<..., ExternalPreferred>()`; Radio does not bypass ESPressio-System with local platform allocation policy.
 
