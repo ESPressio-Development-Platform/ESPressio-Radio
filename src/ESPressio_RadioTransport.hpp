@@ -297,6 +297,7 @@ public:
         _started = false;
         _peers.ForEach([&](RadioPeerHandle peer, const RadioPeerBinding& binding) { if (binding.Interface != nullptr) _observers.NotifyPeerInvalidated(*this, *binding.Interface, peer, binding.Address, RadioPeerInvalidationReason::TransportStopped); });
         _peers.Clear();
+        if (_deferredTracker != nullptr) _deferredTracker->Clear();
         for (auto& reassembly : _reassemblies) reassembly.Reset();
         for (auto& recent : _recent) recent = {};
         for (const auto& record : _interfaces) if (record.Radio != nullptr) record.Radio->Stop();
