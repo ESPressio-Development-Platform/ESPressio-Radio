@@ -23,6 +23,19 @@ struct DeferredLogicalTransferHandle final {
     }
 };
 
+/// <summary>RadioTransport-owned immutable identity/context for one accepted logical transfer.</summary>
+struct DeferredLogicalTransferDescriptor final {
+    IRadio* Radio{nullptr};
+    RadioPeerHandle Peer{};
+    RadioAddress Destination{};
+    RadioTransferId TransferId{0};
+    std::uint16_t PayloadBytes{0};
+
+    bool IsValid() const noexcept {
+        return Radio != nullptr && Destination.IsValid() && TransferId != 0U;
+    }
+};
+
 /// <summary>Result of registering one accepted physical fragment with a deferred logical-transfer tracker.</summary>
 enum class DeferredFragmentRegistrationResult : std::uint8_t {
     Registered,
@@ -43,7 +56,36 @@ enum class DeferredResolutionResult : std::uint8_t {
 /// <summary>One terminal aggregate for a complete Radio-owned logical transfer.</summary>
 struct LogicalTransferTerminalEvidence final {
     DeferredLogicalTransferHandle Transfer{};
+    DeferredLogicalTransferDescriptor Descriptor{};
     RadioDirectLinkEvidence Evidence{};
+};
+
+/// <summary>
+/// Capacity-erased correlation contract consumed by RadioTransport. Concrete capacity remains an explicit composition choice.
+/// </summary>
+class IDeferredLogicalTransferTracker {
+public:
+    virtual ~IDeferredLogicalTransferTracker() = default;
+    virtual DeferredLogicalTransferHandle Begin(
+        const DeferredLogicalTransferDescriptor& descriptor,
+        std::uint8_t fragmentCount
+    ) noexcept = 0;
+    virtual DeferredFragmentRegistrationResult RegisterAcceptedFragment(
+        DeferredLogicalTransferHandle handle,
+        std::uint8_t fragmentIndex,
+        IRadio& radio,
+        const RadioSendResult& result,
+        LogicalTransferTerminalEvidence* terminal = nullptr
+    ) noexcept = 0;
+    virtual DeferredResolutionResult Resolve(
+        IRadio& radio,
+        RadioTransmissionHandle transmission,
+        const RadioDirectLinkEvidence& evidence,
+        LogicalTransferTerminalEvidence* terminal = nullptr
+    ) noexcept = 0;
+    virtual bool Release(DeferredLogicalTransferHandle handle) noexcept = 0;
+    virtual bool Contains(DeferredLogicalTransferHandle handle) const noexcept = 0;
+    virtual std::size_t Size() const noexcept = 0;
 };
 
 /// <summary>
@@ -63,7 +105,7 @@ struct LogicalTransferTerminalEvidence final {
 /// immediately on return before yielding its serialized execution domain.
 /// </remarks>
 template<std::size_t Capacity>
-class DeferredLogicalTransferTracker final {
+class DeferredLogicalTransferTracker final : public IDeferredLogicalTransferTracker {
     static_assert(Capacity > 0U, "Deferred logical-transfer capacity must be explicit and non-zero.");
     static_assert(Capacity <= std::numeric_limits<std::uint16_t>::max(), "Capacity must fit the handle slot.");
 
@@ -91,6 +133,7 @@ class DeferredLogicalTransferTracker final {
         bool AnyFailure{false};
         bool AnyAcknowledgementUnavailable{false};
         bool AllAcknowledged{true};
+        DeferredLogicalTransferDescriptor Descriptor{};
         std::array<FragmentRecord, 255> Fragments{};
 
         void ResetPayload() noexcept {
@@ -101,6 +144,7 @@ class DeferredLogicalTransferTracker final {
             AnyFailure = false;
             AnyAcknowledgementUnavailable = false;
             AllAcknowledged = true;
+            Descriptor = {};
             for (auto& fragment : Fragments) fragment = {};
         }
     };
@@ -118,9 +162,7 @@ class DeferredLogicalTransferTracker final {
         return record.Used && record.Generation == handle.Generation ? &record : nullptr;
     }
 
-    void ReleaseRecord(Record& record) noexcept {
-        record.ResetPayload();
-    }
+    void ReleaseRecord(Record& record) noexcept { record.ResetPayload(); }
 
     static RadioDirectLinkEvidence Aggregate(const Record& record) noexcept {
         RadioDirectLinkEvidence evidence{};
@@ -147,9 +189,11 @@ class DeferredLogicalTransferTracker final {
     }
 
 public:
-    /// <summary>Reserves one bounded logical-transfer aggregation slot.</summary>
-    DeferredLogicalTransferHandle Begin(std::uint8_t fragmentCount) noexcept {
-        if (fragmentCount == 0U) return {};
+    DeferredLogicalTransferHandle Begin(
+        const DeferredLogicalTransferDescriptor& descriptor,
+        std::uint8_t fragmentCount
+    ) noexcept override {
+        if (!descriptor.IsValid() || fragmentCount == 0U) return {};
         for (std::size_t slot = 0; slot < Capacity; ++slot) {
             auto& record = _records[slot];
             if (record.Used) continue;
@@ -157,21 +201,19 @@ public:
             record.ResetPayload();
             record.Used = true;
             record.FragmentCount = fragmentCount;
+            record.Descriptor = descriptor;
             return {static_cast<std::uint16_t>(slot), record.Generation};
         }
         return {};
     }
 
-    /// <summary>
-    /// Registers the immediate result of one accepted fragment Send. The caller must register every fragment exactly once.
-    /// </summary>
     DeferredFragmentRegistrationResult RegisterAcceptedFragment(
         DeferredLogicalTransferHandle handle,
         std::uint8_t fragmentIndex,
         IRadio& radio,
         const RadioSendResult& result,
         LogicalTransferTerminalEvidence* terminal = nullptr
-    ) noexcept {
+    ) noexcept override {
         auto* record = ResolveRecord(handle);
         if (record == nullptr || fragmentIndex >= record->FragmentCount || !result) {
             return DeferredFragmentRegistrationResult::Invalid;
@@ -204,28 +246,25 @@ public:
                 result.Evidence.PeerAcknowledgement == RadioPeerAcknowledgement::Unavailable;
         }
 
-        if (record->RegisteredCount != record->FragmentCount) {
-            return DeferredFragmentRegistrationResult::Registered;
-        }
+        if (record->RegisteredCount != record->FragmentCount) return DeferredFragmentRegistrationResult::Registered;
         if (HasUnobservableFragment(*record)) {
             ReleaseRecord(*record);
             return DeferredFragmentRegistrationResult::LogicalTransferUnobservable;
         }
         if (record->TerminalCount == record->FragmentCount || record->AnyFailure) {
-            if (terminal != nullptr) *terminal = {handle, Aggregate(*record)};
+            if (terminal != nullptr) *terminal = {handle, record->Descriptor, Aggregate(*record)};
             ReleaseRecord(*record);
             return DeferredFragmentRegistrationResult::LogicalTransferTerminal;
         }
         return DeferredFragmentRegistrationResult::Registered;
     }
 
-    /// <summary>Applies one terminal provider observation to the matching outstanding fragment.</summary>
     DeferredResolutionResult Resolve(
         IRadio& radio,
         RadioTransmissionHandle transmission,
         const RadioDirectLinkEvidence& evidence,
         LogicalTransferTerminalEvidence* terminal = nullptr
-    ) noexcept {
+    ) noexcept override {
         if (!transmission || !evidence.IsTerminal()) return DeferredResolutionResult::Invalid;
 
         for (std::size_t slot = 0; slot < Capacity; ++slot) {
@@ -250,7 +289,7 @@ public:
                 if (record.AnyFailure ||
                     (record.RegisteredCount == record.FragmentCount && record.TerminalCount == record.FragmentCount)) {
                     const DeferredLogicalTransferHandle handle{static_cast<std::uint16_t>(slot), record.Generation};
-                    if (terminal != nullptr) *terminal = {handle, Aggregate(record)};
+                    if (terminal != nullptr) *terminal = {handle, record.Descriptor, Aggregate(record)};
                     ReleaseRecord(record);
                     return DeferredResolutionResult::LogicalTransferTerminal;
                 }
@@ -260,21 +299,20 @@ public:
         return DeferredResolutionResult::UnknownTransmission;
     }
 
-    /// <summary>Releases an outstanding aggregation without producing terminal evidence.</summary>
-    bool Release(DeferredLogicalTransferHandle handle) noexcept {
+    bool Release(DeferredLogicalTransferHandle handle) noexcept override {
         auto* record = ResolveRecord(handle);
         if (record == nullptr) return false;
         ReleaseRecord(*record);
         return true;
     }
 
-    bool Contains(DeferredLogicalTransferHandle handle) const noexcept {
+    bool Contains(DeferredLogicalTransferHandle handle) const noexcept override {
         if (!handle || handle.Slot >= Capacity) return false;
         const auto& record = _records[handle.Slot];
         return record.Used && record.Generation == handle.Generation;
     }
 
-    std::size_t Size() const noexcept {
+    std::size_t Size() const noexcept override {
         std::size_t count = 0;
         for (const auto& record : _records) if (record.Used) ++count;
         return count;
