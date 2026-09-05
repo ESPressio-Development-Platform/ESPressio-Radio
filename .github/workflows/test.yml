@@ -32,6 +32,10 @@ jobs:
         run: g++ -std=c++17 -Wall -Wextra -Werror -Isrc -Ideps/System/src -Ideps/Observable/src tests/radio_deferred_transmission_tests.cpp -o radio_deferred_transmission_tests -pthread
       - name: Run deferred-transmission tests
         run: ./radio_deferred_transmission_tests
+      - name: Build deferred logical-transfer aggregation tests
+        run: g++ -std=c++17 -Wall -Wextra -Werror -Isrc -Ideps/System/src -Ideps/Observable/src tests/radio_deferred_logical_transfer_tracker_tests.cpp -o radio_deferred_logical_transfer_tracker_tests -pthread
+      - name: Run deferred logical-transfer aggregation tests
+        run: ./radio_deferred_logical_transfer_tracker_tests
       - name: Build peer registry tests
         run: g++ -std=c++17 -Wall -Wextra -Werror -Isrc -Ideps/System/src -Ideps/Observable/src tests/radio_peer_registry_tests.cpp -o radio_peer_registry_tests -pthread
       - name: Run peer registry tests
@@ -112,6 +116,7 @@ jobs:
 
           ESPressio::Radio::RadioTransport transport;
           ESPressio::Radio::RadioPeerRegistry<> peers;
+          ESPressio::Radio::DeferredLogicalTransferTracker<2> deferredTransfers;
           ESPressio::Radio::RadioWorker worker(transport);
           ESPressio::Event::RadioEventBridge bridge;
           DummyRadio dummyRadio;
@@ -133,5 +138,5 @@ jobs:
 
           void loop() {}
           EOF
-      - name: Compile worker, peer registry, optional Event bridge and radio clock synchronizer against propagation APIs
+      - name: Compile worker, peer registry, deferred aggregation, optional Event bridge and radio clock synchronizer against propagation APIs
         run: pio run -d "$RUNNER_TEMP/espressio-radio-worker-ci"
