@@ -84,6 +84,8 @@ public:
         LogicalTransferTerminalEvidence* terminal = nullptr
     ) noexcept = 0;
     virtual bool Release(DeferredLogicalTransferHandle handle) noexcept = 0;
+    /// <summary>Releases every unresolved logical-transfer reservation during controlled transport reset/shutdown.</summary>
+    virtual void Clear() noexcept = 0;
     virtual bool Contains(DeferredLogicalTransferHandle handle) const noexcept = 0;
     virtual std::size_t Size() const noexcept = 0;
 };
@@ -100,9 +102,10 @@ public:
 /// neither synchronous terminal evidence nor a promised deferred handle, stronger logical-transfer terminal evidence
 /// cannot be established and the reservation is released as Unobservable once registration is complete.
 ///
-/// The owning Radio execution domain must serialize Begin/Register/Resolve/Release calls. Providers must not publish a
-/// promised deferred handle before the corresponding Send call has returned; RadioTransport registers that handle
-/// immediately on return before yielding its serialized execution domain.
+/// The owning Radio execution domain must serialize Begin/Register/Resolve/Release/Clear calls. Providers must not publish
+/// a promised deferred handle before the corresponding Send call has returned; RadioTransport registers that handle
+/// immediately on return before yielding its serialized execution domain. Clear is reset/shutdown cleanup only and emits
+/// no fabricated terminal evidence for work whose provider outcome was never established.
 /// </remarks>
 template<std::size_t Capacity>
 class DeferredLogicalTransferTracker final : public IDeferredLogicalTransferTracker {
@@ -304,6 +307,12 @@ public:
         if (record == nullptr) return false;
         ReleaseRecord(*record);
         return true;
+    }
+
+    void Clear() noexcept override {
+        for (auto& record : _records) {
+            if (record.Used) ReleaseRecord(record);
+        }
     }
 
     bool Contains(DeferredLogicalTransferHandle handle) const noexcept override {
