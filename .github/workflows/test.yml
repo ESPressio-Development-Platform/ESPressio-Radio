@@ -20,6 +20,10 @@ jobs:
         run: g++ -std=c++17 -Wall -Wextra -Werror -Isrc -Ideps/System/src -Ideps/Observable/src tests/radio_transport_tests.cpp -o radio_transport_tests -pthread
       - name: Run transport tests
         run: ./radio_transport_tests
+      - name: Build RadioTransport deferred-evidence integration tests
+        run: g++ -std=c++17 -Wall -Wextra -Werror -Isrc -Ideps/System/src -Ideps/Observable/src tests/radio_transport_deferred_evidence_tests.cpp -o radio_transport_deferred_evidence_tests -pthread
+      - name: Run RadioTransport deferred-evidence integration tests
+        run: ./radio_transport_deferred_evidence_tests
       - name: Build direct-link evidence tests
         run: g++ -std=c++17 -Wall -Wextra -Werror -Isrc -Ideps/System/src -Ideps/Observable/src tests/radio_direct_link_evidence_tests.cpp -o radio_direct_link_evidence_tests -pthread
       - name: Run direct-link evidence tests
@@ -95,9 +99,7 @@ jobs:
                   return {
                       ESPressio::Radio::RadioCapability::HardwareAddressing |
                       ESPressio::Radio::RadioCapability::ReceiveTimestamp,
-                      32,
-                      1,
-                      4096
+                      32, 1, 4096
                   };
               }
               ESPressio::Radio::RadioAddress LocalAddress() const noexcept override {
@@ -105,9 +107,7 @@ jobs:
                   return ESPressio::Radio::RadioAddress::FromBytes(&value, 1);
               }
               ESPressio::Radio::RadioSendResult Send(
-                  const ESPressio::Radio::RadioAddress&,
-                  const uint8_t*,
-                  std::size_t
+                  const ESPressio::Radio::RadioAddress&, const uint8_t*, std::size_t
               ) override { return ESPressio::Radio::RadioSendResult::Accepted(); }
               void SetReceiver(ESPressio::Radio::IRadioReceiver*) noexcept override {}
               void SetWorkSignal(ESPressio::Radio::IRadioWorkSignal*) noexcept override {}
@@ -123,11 +123,10 @@ jobs:
               void OnLogicalTransferTerminal(const ESPressio::Radio::LogicalTransferTerminalEvidence&) override {}
           };
 
-          ESPressio::Radio::RadioTransport transport;
-          ESPressio::Radio::RadioPeerRegistry<> peers;
           ESPressio::Radio::DeferredLogicalTransferTracker<2> deferredTransfers;
           DummyTerminalObserver terminalObserver;
-          ESPressio::Radio::DeferredLogicalTransferObserverBridge deferredBridge(deferredTransfers, terminalObserver);
+          ESPressio::Radio::RadioTransport transport(deferredTransfers, terminalObserver);
+          ESPressio::Radio::RadioPeerRegistry<> peers;
           ESPressio::Radio::RadioWorker worker(transport);
           ESPressio::Event::RadioEventBridge bridge;
           DummyRadio dummyRadio;
