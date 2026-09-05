@@ -24,102 +24,106 @@ private:
     RadioAddress _address{};
     RadioObserverSubscriptions _observers{};
 };
+
+DeferredLogicalTransferDescriptor Descriptor(TestRadio& radio, std::uint8_t destination, RadioTransferId transferId) {
+    return {&radio, {}, RadioAddress::FromBytes(&destination, 1), transferId, 64};
+}
 }
 
 int main() {
     TestRadio radioA(1);
     TestRadio radioB(2);
     DeferredLogicalTransferTracker<2> tracker;
+    IDeferredLogicalTransferTracker& erased = tracker;
     LogicalTransferTerminalEvidence terminal{};
 
-    // Mixed synchronous + deferred fragments complete only when every fragment is terminal.
-    const auto transfer = tracker.Begin(3);
+    const auto transfer = erased.Begin(Descriptor(radioA, 9, 1), 3);
     assert(transfer);
-    assert(tracker.RegisterAcceptedFragment(
+    assert(erased.RegisterAcceptedFragment(
         transfer, 0, radioA,
-        RadioSendResult::Accepted(RadioDirectLinkEvidence::CompletedAndAcknowledged()),
-        &terminal
+        RadioSendResult::Accepted(RadioDirectLinkEvidence::CompletedAndAcknowledged()), &terminal
     ) == DeferredFragmentRegistrationResult::Registered);
-    assert(tracker.RegisterAcceptedFragment(
-        transfer, 1, radioA,
-        RadioSendResult::Accepted({}, RadioTransmissionHandle{11}),
-        &terminal
+    assert(erased.RegisterAcceptedFragment(
+        transfer, 1, radioA, RadioSendResult::Accepted({}, RadioTransmissionHandle{11}), &terminal
     ) == DeferredFragmentRegistrationResult::Registered);
-    assert(tracker.RegisterAcceptedFragment(
-        transfer, 2, radioB,
-        RadioSendResult::Accepted({}, RadioTransmissionHandle{12}),
-        &terminal
+    assert(erased.RegisterAcceptedFragment(
+        transfer, 2, radioB, RadioSendResult::Accepted({}, RadioTransmissionHandle{12}), &terminal
     ) == DeferredFragmentRegistrationResult::Registered);
-    assert(tracker.Contains(transfer));
+    assert(erased.Contains(transfer));
 
-    assert(tracker.Resolve(
+    assert(erased.Resolve(
         radioA, RadioTransmissionHandle{11}, RadioDirectLinkEvidence::CompletedAndAcknowledged(), &terminal
     ) == DeferredResolutionResult::Pending);
-    assert(tracker.Resolve(
+    assert(erased.Resolve(
         radioB, RadioTransmissionHandle{12}, RadioDirectLinkEvidence::CompletedWithoutPeerAcknowledgement(), &terminal
     ) == DeferredResolutionResult::LogicalTransferTerminal);
     assert(terminal.Transfer == transfer);
+    assert(terminal.Descriptor.Radio == &radioA);
+    assert(terminal.Descriptor.TransferId == 1);
+    assert(terminal.Descriptor.PayloadBytes == 64);
     assert(terminal.Evidence.TransmissionCompleted());
     assert(!terminal.Evidence.PeerAcknowledged());
     assert(terminal.Evidence.PeerAcknowledgement == RadioPeerAcknowledgement::Unavailable);
-    assert(!tracker.Contains(transfer));
+    assert(!erased.Contains(transfer));
 
-    // One terminal failure terminates the logical transfer; a late duplicate provider observation is unknown.
-    const auto failed = tracker.Begin(2);
+    const auto failed = erased.Begin(Descriptor(radioA, 9, 2), 2);
     assert(failed);
-    assert(tracker.RegisterAcceptedFragment(
+    assert(erased.RegisterAcceptedFragment(
         failed, 0, radioA, RadioSendResult::Accepted({}, RadioTransmissionHandle{21}), &terminal
     ) == DeferredFragmentRegistrationResult::Registered);
-    assert(tracker.RegisterAcceptedFragment(
+    assert(erased.RegisterAcceptedFragment(
         failed, 1, radioA, RadioSendResult::Accepted({}, RadioTransmissionHandle{22}), &terminal
     ) == DeferredFragmentRegistrationResult::Registered);
-    assert(tracker.Resolve(
+    assert(erased.Resolve(
         radioA, RadioTransmissionHandle{21}, RadioDirectLinkEvidence::Failed(), &terminal
     ) == DeferredResolutionResult::LogicalTransferTerminal);
     assert(terminal.Transfer == failed);
+    assert(terminal.Descriptor.TransferId == 2);
     assert(terminal.Evidence.TransmissionFailed());
-    assert(tracker.Resolve(
+    assert(erased.Resolve(
         radioA, RadioTransmissionHandle{22}, RadioDirectLinkEvidence::CompletedAndAcknowledged(), &terminal
     ) == DeferredResolutionResult::UnknownTransmission);
 
-    // Accepted-but-unobservable fragment prevents fabrication of stronger logical terminal evidence.
-    const auto unobservable = tracker.Begin(2);
+    const auto unobservable = erased.Begin(Descriptor(radioA, 9, 3), 2);
     assert(unobservable);
-    assert(tracker.RegisterAcceptedFragment(
-        unobservable, 0, radioA, RadioSendResult::Accepted(RadioDirectLinkEvidence::CompletedAndAcknowledged()), &terminal
+    assert(erased.RegisterAcceptedFragment(
+        unobservable, 0, radioA,
+        RadioSendResult::Accepted(RadioDirectLinkEvidence::CompletedAndAcknowledged()), &terminal
     ) == DeferredFragmentRegistrationResult::Registered);
-    assert(tracker.RegisterAcceptedFragment(
+    assert(erased.RegisterAcceptedFragment(
         unobservable, 1, radioA, RadioSendResult::Accepted(), &terminal
     ) == DeferredFragmentRegistrationResult::LogicalTransferUnobservable);
-    assert(!tracker.Contains(unobservable));
+    assert(!erased.Contains(unobservable));
 
-    // Correlation is provider-local: identical handle values on another Radio do not match.
-    const auto scoped = tracker.Begin(1);
+    const auto scoped = erased.Begin(Descriptor(radioA, 9, 4), 1);
     assert(scoped);
-    assert(tracker.RegisterAcceptedFragment(
+    assert(erased.RegisterAcceptedFragment(
         scoped, 0, radioA, RadioSendResult::Accepted({}, RadioTransmissionHandle{31}), &terminal
     ) == DeferredFragmentRegistrationResult::Registered);
-    assert(tracker.Resolve(
+    assert(erased.Resolve(
         radioB, RadioTransmissionHandle{31}, RadioDirectLinkEvidence::CompletedAndAcknowledged(), &terminal
     ) == DeferredResolutionResult::UnknownTransmission);
-    assert(tracker.Resolve(
+    assert(erased.Resolve(
         radioA, RadioTransmissionHandle{31}, RadioDirectLinkEvidence::CompletedAndAcknowledged(), &terminal
     ) == DeferredResolutionResult::LogicalTransferTerminal);
 
-    // Capacity is explicit and generation-safe; stale handles cannot affect a reused slot.
-    const auto one = tracker.Begin(1);
-    const auto two = tracker.Begin(1);
+    const auto one = erased.Begin(Descriptor(radioA, 9, 5), 1);
+    const auto two = erased.Begin(Descriptor(radioA, 9, 6), 1);
     assert(one && two);
-    assert(!tracker.Begin(1));
-    assert(tracker.Release(one));
-    const auto replacement = tracker.Begin(1);
+    assert(!erased.Begin(Descriptor(radioA, 9, 7), 1));
+    assert(erased.Release(one));
+    const auto replacement = erased.Begin(Descriptor(radioA, 9, 8), 1);
     assert(replacement);
     assert(replacement.Slot == one.Slot);
     assert(replacement.Generation != one.Generation);
-    assert(!tracker.Release(one));
-    assert(tracker.Release(replacement));
-    assert(tracker.Release(two));
-    assert(tracker.Size() == 0U);
+    assert(!erased.Release(one));
+    assert(erased.Release(replacement));
+    assert(erased.Release(two));
+    assert(erased.Size() == 0U);
+
+    DeferredLogicalTransferDescriptor invalid{};
+    assert(!erased.Begin(invalid, 1));
+    assert(!erased.Begin(Descriptor(radioA, 9, 9), 0));
 
     return 0;
 }
