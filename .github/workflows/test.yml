@@ -80,7 +80,7 @@ jobs:
               https://github.com/ESPressio-Development-Platform/ESPressio-Task.git#structural_realignment
               https://github.com/ESPressio-Development-Platform/ESPressio-Units.git#structural_realignment
               https://github.com/ESPressio-Development-Platform/ESPressio-Observable.git#structural_realignment
-              https://github.com/ESPressio-Development-Platform/ESPressio-Timing.git#structural_realignment
+              https://github.com/ESPressio-Development-Platform/ESPressio-Timing.git#structural_realignment_propagation_ESPressio-Mesh
               https://github.com/ESPressio-Development-Platform/ESPressio-Threads.git#structural_realignment
               https://github.com/ESPressio-Development-Platform/ESPressio-Event.git#structural_realignment
               https://github.com/ESPressio-Development-Platform/ESPressio-Radio.git#structural_realignment_propagation_ESPressio-Mesh
