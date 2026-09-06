@@ -80,6 +80,7 @@ public:
         _exposeReceiveSource(exposeReceiveSource) {}
 
     void Connect(FakeClockRadio& peer) noexcept { _peer = &peer; }
+    void SetDeliveryEnabled(bool enabled) noexcept { _deliveryEnabled = enabled; }
 
     bool Start() override {
         _started = true;
@@ -117,6 +118,7 @@ public:
         if (_peer == nullptr || destination != _peer->_local) {
             return complete({RadioSendStatus::InvalidAddress, 0});
         }
+        if (!_deliveryEnabled) return complete(RadioSendResult::Accepted());
 
         RadioPacketView packet;
         packet.Source = _peer->_exposeReceiveSource ? _local : RadioAddress{};
@@ -140,6 +142,7 @@ private:
     bool _timestamped = true;
     uint16_t _mtu = 32;
     bool _exposeReceiveSource = true;
+    bool _deliveryEnabled = true;
     bool _started = false;
     IRadioReceiver* _receiver = nullptr;
     IRadioWorkSignal* _workSignal = nullptr;
@@ -256,6 +259,33 @@ static void TestTimestampFallbackAndStrictRequirement() {
     assert(reference.GetStatistics().TimestampFallbacks == 1);
 }
 
+static void TestOutstandingExchangeIsNotReplaced() {
+    FakeClockRadio clientRadio(0xA5, true, 32);
+    FakeClockRadio referenceRadio(0xB5, true, 32);
+    clientRadio.Connect(referenceRadio);
+    referenceRadio.Connect(clientRadio);
+    assert(clientRadio.Start());
+    assert(referenceRadio.Start());
+
+    // Accept the request at the radio boundary but deliberately withhold delivery/response.
+    clientRadio.SetDeliveryEnabled(false);
+    FakeSynchronizationTarget clientTarget;
+    RadioClockSynchronizer client(clientRadio, &clientTarget);
+    RadioClockSynchronizationConfig clientConfig;
+    clientConfig.Mode = RadioClockSynchronizationMode::Client;
+    clientConfig.ReferencePeer = referenceRadio.LocalAddress();
+    clientConfig.RequireReceiveTimestamp = true;
+    assert(client.Initialize(clientConfig));
+
+    const auto first = client.RequestSynchronization();
+    assert(first.Status == RadioSendStatus::Accepted);
+    const auto second = client.RequestSynchronization();
+    assert(second.Status == RadioSendStatus::Busy);
+    assert(client.GetStatistics().RequestsAttempted == 2U);
+    assert(client.GetStatistics().RequestsSent == 1U);
+    assert(clientTarget.SubmittedSamples == 0U);
+}
+
 static void TestMtuBelowResponseSizeIsRejected() {
     FakeClockRadio radio(0xA3, true, 31);
     FakeSynchronizationTarget target;
@@ -269,6 +299,7 @@ int main() {
     TestFourTimestampExchangeAtNrf24Mtu();
     TestSourceLessRadioUsesEmbeddedRequesterAddress();
     TestTimestampFallbackAndStrictRequirement();
+    TestOutstandingExchangeIsNotReplaced();
     TestMtuBelowResponseSizeIsRejected();
     return 0;
 }
