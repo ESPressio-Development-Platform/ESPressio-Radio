@@ -266,7 +266,6 @@ public:
     std::size_t MaximumLogicalTransferSize(const IRadio& radio) const noexcept { const RadioAddress source = radio.LocalAddress(); const std::size_t chunk = FragmentPayloadBytes(radio, source); if (chunk == 0) return 0; std::size_t maximum = std::min<std::size_t>(ESPRESSIO_RADIO_MAX_LOGICAL_TRANSFER_BYTES, chunk * 255u); const uint16_t providerMaximum = radio.Capabilities().MaximumLogicalTransferBytes; if (providerMaximum != 0) maximum = std::min<std::size_t>(maximum, providerMaximum); return maximum; }
 
     bool AddInterface(IRadio& radio) noexcept {
-        if (!radio.LocalAddress().IsValid()) return false;
         if (FindInterface(radio) != nullptr) return true;
         for (auto& record : _interfaces) {
             if (record.Radio != nullptr) continue;
@@ -297,12 +296,14 @@ public:
     bool Start() {
         if (_started) return true;
         for (const auto& record : _interfaces) {
-            if (record.Radio == nullptr || record.Radio->Start()) continue;
-            for (const auto& rollback : _interfaces) {
-                if (rollback.Radio == record.Radio) break;
-                if (rollback.Radio != nullptr) rollback.Radio->Stop();
+            if (record.Radio == nullptr) continue;
+            if (!record.Radio->Start() || !record.Radio->LocalAddress().IsValid()) {
+                for (const auto& rollback : _interfaces) {
+                    if (rollback.Radio != nullptr) rollback.Radio->Stop();
+                    if (rollback.Radio == record.Radio) break;
+                }
+                return false;
             }
-            return false;
         }
         _started = true;
         _observers.NotifyStarted(*this);

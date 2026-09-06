@@ -100,7 +100,7 @@ It does not authenticate/decrypt messages, resolve routes, forward Mesh traffic,
 
 Callback-driven providers such as ESP32 raw 802.11 copy accepted inbound packet data into bounded provider-owned queues and invoke only `IRadioWorkSignal::OnRadioWorkAvailable()`. That signal wakes the PrecisionThread; parsing/reassembly and observer notification therefore occur outside the hardware/driver callback. Providers without an asynchronous wake path may be serviced by the worker's bounded iteration cadence.
 
-`RadioWorker::AddInterface()` registers the interface with RadioTransport and installs the worker as its inbound receiver/work signal. `RadioTransport::AddInterface()` itself records only the bounded Radio-layer registration; it does not install a competing receive path.
+`RadioWorker::AddInterface()` registers the interface with RadioTransport and installs the worker as its inbound receiver/work signal. Registration does not require a local link address yet: concrete providers such as ESP32 Raw80211 may resolve their hardware address during `Start()`. `RadioTransport::Start()` validates that every started interface then exposes a valid address and rolls the started set back on failure. `RadioTransport::AddInterface()` itself records only the bounded Radio-layer registration; it does not install a competing receive path.
 
 ## Physical and logical capabilities
 

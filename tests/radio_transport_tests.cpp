@@ -83,6 +83,39 @@ private:
     FakeRadio* _peer = nullptr;
 };
 
+class StartAddressRadio final : public IRadio {
+public:
+    explicit StartAddressRadio(bool resolvesAddress) : _resolvesAddress(resolvesAddress) {}
+
+    bool Start() override {
+        _started = true;
+        if (_resolvesAddress) {
+            const uint8_t address = 0xD1;
+            _local = RadioAddress::FromBytes(&address, 1);
+        }
+        return true;
+    }
+    void Stop() noexcept override { _started = false; }
+    bool IsStarted() const noexcept override { return _started; }
+    RadioCapabilities Capabilities() const noexcept override {
+        return {RadioCapability::HardwareAddressing, 32, 1, 128};
+    }
+    RadioAddress LocalAddress() const noexcept override { return _local; }
+    RadioSendResult Send(const RadioAddress&, const uint8_t*, std::size_t) override {
+        return RadioSendResult::Accepted();
+    }
+    void SetReceiver(IRadioReceiver*) noexcept override {}
+    void SetWorkSignal(IRadioWorkSignal*) noexcept override {}
+    void DrainInbound() override {}
+    RadioObserverSubscriptions& Observers() noexcept override { return _observers; }
+
+private:
+    bool _resolvesAddress = false;
+    bool _started = false;
+    RadioAddress _local{};
+    RadioObserverSubscriptions _observers{};
+};
+
 class TestIngress final : public IRadioReceiver {
 public:
     explicit TestIngress(RadioTransport& transport) : _transport(transport) {}
@@ -284,6 +317,26 @@ static void TestFragmentedDirectLinkDeliveryAndObservers() {
     assert(observerB.Stopped == 1);
 }
 
+static void TestInterfaceMayResolveAddressDuringStart() {
+    StartAddressRadio radio(true);
+    RadioTransport transport;
+    assert(!radio.LocalAddress().IsValid());
+    assert(transport.AddInterface(radio));
+    assert(transport.Start());
+    assert(radio.IsStarted());
+    assert(radio.LocalAddress().IsValid());
+    transport.Stop();
+}
+
+static void TestStartRejectsInterfaceThatNeverResolvesAddress() {
+    StartAddressRadio radio(false);
+    RadioTransport transport;
+    assert(transport.AddInterface(radio));
+    assert(!transport.Start());
+    assert(!transport.IsStarted());
+    assert(!radio.IsStarted());
+}
+
 static void TestPeerHandleSendAndGenerationInvalidation() {
     FakeRadio radioA(0xA3, 64);
     FakeRadio radioB(0xB3, 64);
@@ -464,6 +517,8 @@ static void TestReassemblySaturationDoesNotEvictActiveTransfer() {
 }
 
 int main() {
+    TestInterfaceMayResolveAddressDuringStart();
+    TestStartRejectsInterfaceThatNeverResolvesAddress();
     TestFragmentedDirectLinkDeliveryAndObservers();
     TestPeerHandleSendAndGenerationInvalidation();
     TestInterfaceRemovalInvalidatesOwnedPeers();
