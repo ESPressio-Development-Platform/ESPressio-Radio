@@ -55,6 +55,10 @@ struct RadioClockSynchronizationStatistics {
 /// timestamps where available. T3 is captured immediately before response transmission. Timing remains solely responsible
 /// for offset/delay estimation, filtering, drift learning and clock discipline.
 ///
+/// At most one client exchange may be outstanding. A new interval never replaces a still-pending sequence: once the
+/// synchronization interval has elapsed the unanswered exchange is expired before a new request is issued. This prevents
+/// delayed responses from being mis-correlated and avoids self-inflicted synchronization traffic under scheduling delay.
+///
 /// Requests also carry the client's opaque RadioAddress. Radios such as nRF24 do not expose the transmitter address on RX;
 /// when packet.Source is unavailable the reference therefore replies to this embedded address. When Source is available it
 /// takes precedence and must agree with the embedded address.
@@ -253,13 +257,12 @@ private:
             return;
         }
 
-        const uint32_t pending = _pendingSequence.load(std::memory_order_acquire);
-        if (pending == 0 || pending != sequence) {
+        uint32_t expected = sequence;
+        if (!_pendingSequence.compare_exchange_strong(
+                expected, 0U, std::memory_order_acq_rel, std::memory_order_acquire)) {
             _ignoredFrames.fetch_add(1, std::memory_order_relaxed);
             return;
         }
-
-        _pendingSequence.store(0, std::memory_order_release);
         _responsesReceived.fetch_add(1, std::memory_order_relaxed);
 
         Timing::ClockSynchronizationSample<Timing::ClockTick> sample;
@@ -355,6 +358,10 @@ public:
             return {RadioSendStatus::InvalidAddress, 0};
         }
 
+        if (_pendingSequence.load(std::memory_order_acquire) != 0U) {
+            return {RadioSendStatus::Busy, 0};
+        }
+
         uint32_t sequence = _nextSequence.fetch_add(1, std::memory_order_relaxed);
         if (sequence == 0) {
             sequence = _nextSequence.fetch_add(1, std::memory_order_relaxed);
@@ -381,7 +388,9 @@ public:
         if (result) {
             _requestsSent.fetch_add(1, std::memory_order_relaxed);
         } else {
-            _pendingSequence.store(0, std::memory_order_release);
+            uint32_t expected = sequence;
+            (void)_pendingSequence.compare_exchange_strong(
+                expected, 0U, std::memory_order_acq_rel, std::memory_order_acquire);
             _sendFailures.fetch_add(1, std::memory_order_relaxed);
         }
         return result;
@@ -396,7 +405,15 @@ public:
         const uint64_t interval =
             static_cast<uint64_t>(config.SynchronizationIntervalMilliseconds) * 1000000ULL;
         const uint64_t last = _lastRequestMonotonicNanoseconds.load(std::memory_order_acquire);
-        if (last == 0 || now - last >= interval) (void)RequestSynchronization();
+        if (last != 0U && now - last < interval) return;
+
+        const uint32_t pending = _pendingSequence.load(std::memory_order_acquire);
+        if (pending != 0U) {
+            uint32_t expected = pending;
+            (void)_pendingSequence.compare_exchange_strong(
+                expected, 0U, std::memory_order_acq_rel, std::memory_order_acquire);
+        }
+        (void)RequestSynchronization();
     }
 
     void OnRadioPacketReceived(IRadio& radio, const RadioPacketView& packet) override {
