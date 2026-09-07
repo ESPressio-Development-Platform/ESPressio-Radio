@@ -136,7 +136,9 @@ jobs:
           ESPressio::Radio::RadioWorker worker(transport);
           ESPressio::Event::RadioEventBridge bridge;
           DummyRadio dummyRadio;
-          ESPressio::Radio::RadioClockSynchronizer clockSynchronizer(dummyRadio);
+          ESPressio::Radio::RadioClockSynchronizationDiagnosticTarget clockDiagnostics(
+              ESPressio::Timing::SystemClock<>::GetInstance());
+          ESPressio::Radio::RadioClockSynchronizer clockSynchronizer(dummyRadio, &clockDiagnostics);
 
           void setup() {
               ESPressio::Radio::RadioWorkerConfiguration configuration;
@@ -150,6 +152,7 @@ jobs:
               sync.Mode = ESPressio::Radio::RadioClockSynchronizationMode::Reference;
               sync.RequireReceiveTimestamp = true;
               (void)clockSynchronizer.Initialize(sync);
+              (void)clockDiagnostics.GetRejectionStatistics();
           }
 
           void loop() {}
