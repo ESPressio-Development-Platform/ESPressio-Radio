@@ -28,6 +28,7 @@ struct RadioControlWorkerConfiguration final {
     std::uint32_t IterationPeriodMilliseconds{1U};
     std::uint32_t DesiredExecutionBudgetMilliseconds{1U};
     unsigned int Priority{4U};
+    /// <summary>Requested core, or -1 for no processor affinity.</summary>
     int CoreId{-1};
 };
 
@@ -124,7 +125,8 @@ public:
         SetIterationPeriod(Units::MilliSeconds<std::uint32_t>(configuration.IterationPeriodMilliseconds));
         SetDesiredIterationPeriod(Units::MilliSeconds<std::uint32_t>(configuration.DesiredExecutionBudgetMilliseconds));
         SetPriority(configuration.Priority);
-        if (configuration.CoreId >= 0) SetCoreID(configuration.CoreId);
+        // Thread defaults to core 0, so omitting SetCoreID for the -1 sentinel would accidentally pin the worker.
+        SetCoreID(configuration.CoreId);
     }
 
     ~RadioControlWorker() override {
