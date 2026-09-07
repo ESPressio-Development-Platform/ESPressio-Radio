@@ -22,22 +22,30 @@ struct RadioWorkerConfiguration {
     /// <summary>
     /// Maximum idle interval between inbound-service passes. This allows providers without an asynchronous RX signal,
     /// such as an nRF24 implementation without an IRQ integration, to be serviced without application polling.
+    /// Async providers wake this worker immediately and therefore do not normally wait for this cadence.
     /// </summary>
     uint32_t IterationPeriodMilliseconds = 10;
 
     /// <summary>Desired execution budget for one inbound-service pass.</summary>
     uint32_t DesiredExecutionBudgetMilliseconds = 2;
+
+    /// <summary>
+    /// Maximum provider packets serviced per interface in one worker pass. This is a cooperative execution quantum, not
+    /// a queue-capacity limit. A zero value asks each provider to use its own finite quantum.
+    /// </summary>
+    std::size_t IngressQuantumPackets = 8U;
 };
 
 /// <summary>
-/// ESPressio PrecisionThread worker responsible only for draining standard physical Radio ingress and advancing
+/// ESPressio PrecisionThread worker responsible only for servicing standard physical Radio ingress and advancing
 /// Radio-owned direct-link logical reassembly.
 /// </summary>
 /// <remarks>
 /// Latency-critical Radio control traffic may be removed before this path by an IRadioPrioritizedIngress provider and
-/// RadioControlWorker. This worker therefore remains the standard opaque-transfer lifecycle and exposes timestamp-to-
-/// service plus per-packet processing-duration statistics so physical tests can locate latency before or within the
-/// standard Radio lifecycle independently of higher Mesh work.
+/// RadioControlWorker. Async provider work is handled through PrecisionThread's dedicated work-wake path rather than by
+/// moving the periodic schedule. Queue-backed providers are serviced in a finite packet quantum so one burst cannot turn
+/// a worker pass into a drain-until-empty spin. The periodic iteration remains only the fallback for unsignalled providers
+/// and for any bounded backlog left after a wake quantum.
 /// </remarks>
 class RadioWorker final
     : public Threads::PrecisionThread<
@@ -84,6 +92,18 @@ private:
         _totalProcessingDurationNanoseconds.fetch_add(duration, std::memory_order_relaxed);
         UpdateMinimum(_minimumProcessingDurationNanoseconds, duration);
         UpdateMaximum(_maximumProcessingDurationNanoseconds, duration);
+    }
+
+    void ServiceInboundQuantum() {
+        RadioWorkerConfiguration configuration;
+        {
+            std::lock_guard<System::Synchronization::Mutex> lock(_configurationMutex);
+            configuration = _configuration;
+        }
+        for (IRadio* radio : _radios) {
+            if (radio == nullptr || !radio->IsStarted()) continue;
+            (void)radio->ServiceInbound(configuration.IngressQuantumPackets);
+        }
     }
 
 public:
@@ -144,13 +164,14 @@ public:
             _configuration = configuration;
         }
         ApplyRuntimeConfiguration(configuration);
-        Bump();
+        WakeForWork();
     }
 
     void OnRadioWorkAvailable(IRadio&) noexcept override {
         _workSignals.fetch_add(1U, std::memory_order_relaxed);
         try {
-            Bump();
+            // Async ingress is independent work, not a request to move the periodic fallback schedule.
+            WakeForWork();
         } catch (...) {
             // A provider work signal must never let scheduler failures escape into a driver callback context.
         }
@@ -181,11 +202,14 @@ public:
     }
 
 protected:
+    void OnWorkWake() override {
+        _workWakePasses.fetch_add(1U, std::memory_order_relaxed);
+        ServiceInboundQuantum();
+    }
+
     void Iterate(Time, Time, Threads::SkippedIterationCount) override {
         _iterations.fetch_add(1U, std::memory_order_relaxed);
-        for (IRadio* radio : _radios) {
-            if (radio != nullptr && radio->IsStarted()) radio->DrainInbound();
-        }
+        ServiceInboundQuantum();
     }
 
 private:
@@ -210,6 +234,7 @@ private:
     // naturally lock-free width on 32-bit targets; the public statistics snapshot widens it to uint64_t.
     std::atomic<std::uint32_t> _workSignals{0U};
     std::atomic<std::uint64_t> _iterations{0U};
+    std::atomic<std::uint64_t> _workWakePasses{0U};
     std::atomic<std::uint64_t> _processingSamples{0U};
     std::atomic<std::uint64_t> _totalProcessingDurationNanoseconds{0U};
     std::atomic<std::uint64_t> _minimumProcessingDurationNanoseconds{0U};
