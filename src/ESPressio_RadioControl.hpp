@@ -76,7 +76,7 @@ public:
     virtual void ServiceControl() noexcept = 0;
 };
 
-/// <summary>Scheduling-latency snapshot from provider RF timestamp to worker packet service.</summary>
+/// <summary>Scheduling and per-packet processing latency snapshot for one Radio worker lifecycle.</summary>
 struct RadioWorkerLatencyStatistics final {
     std::uint64_t PacketsServiced{0U};
     std::uint64_t TimestampedPackets{0U};
@@ -85,12 +85,23 @@ struct RadioWorkerLatencyStatistics final {
     std::uint64_t MaximumServiceLatencyNanoseconds{0U};
     std::uint64_t WorkSignals{0U};
     std::uint64_t Iterations{0U};
+    std::uint64_t ProcessingSamples{0U};
+    std::uint64_t TotalProcessingDurationNanoseconds{0U};
+    std::uint64_t MinimumProcessingDurationNanoseconds{0U};
+    std::uint64_t MaximumProcessingDurationNanoseconds{0U};
 
     double MeanServiceLatencyNanoseconds() const noexcept {
         return TimestampedPackets == 0U
             ? 0.0
             : static_cast<double>(TotalServiceLatencyNanoseconds) /
               static_cast<double>(TimestampedPackets);
+    }
+
+    double MeanProcessingDurationNanoseconds() const noexcept {
+        return ProcessingSamples == 0U
+            ? 0.0
+            : static_cast<double>(TotalProcessingDurationNanoseconds) /
+              static_cast<double>(ProcessingSamples);
     }
 };
 
