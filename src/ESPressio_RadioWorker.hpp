@@ -36,7 +36,8 @@ struct RadioWorkerConfiguration {
 /// <remarks>
 /// Latency-critical Radio control traffic may be removed before this path by an IRadioPrioritizedIngress provider and
 /// RadioControlWorker. This worker therefore remains the standard opaque-transfer lifecycle and exposes timestamp-to-
-/// service statistics so physical tests can identify scheduling/queue delay independently of higher Mesh work.
+/// service plus per-packet processing-duration statistics so physical tests can locate latency before or within the
+/// standard Radio lifecycle independently of higher Mesh work.
 /// </remarks>
 class RadioWorker final
     : public Threads::PrecisionThread<
@@ -74,6 +75,15 @@ private:
         _totalServiceLatencyNanoseconds.fetch_add(latency, std::memory_order_relaxed);
         UpdateMinimum(_minimumServiceLatencyNanoseconds, latency);
         UpdateMaximum(_maximumServiceLatencyNanoseconds, latency);
+    }
+
+    void RecordProcessingDuration(std::uint64_t started, std::uint64_t completed) noexcept {
+        if (completed < started) return;
+        const auto duration = completed - started;
+        _processingSamples.fetch_add(1U, std::memory_order_relaxed);
+        _totalProcessingDurationNanoseconds.fetch_add(duration, std::memory_order_relaxed);
+        UpdateMinimum(_minimumProcessingDurationNanoseconds, duration);
+        UpdateMaximum(_maximumProcessingDurationNanoseconds, duration);
     }
 
 public:
@@ -148,8 +158,10 @@ public:
 
     void OnRadioPacket(IRadio& radio, const RadioPacketView& packet) override {
         RecordServiceLatency(packet);
+        const auto started = System::Clock::Monotonic().NowNanoseconds();
         _transport.ProcessInboundPacket(radio, packet);
         radio.Observers().NotifyPacketReceived(radio, packet);
+        RecordProcessingDuration(started, System::Clock::Monotonic().NowNanoseconds());
     }
 
     RadioWorkerLatencyStatistics GetStatistics() const noexcept {
@@ -160,7 +172,11 @@ public:
             _minimumServiceLatencyNanoseconds.load(std::memory_order_relaxed),
             _maximumServiceLatencyNanoseconds.load(std::memory_order_relaxed),
             _workSignals.load(std::memory_order_relaxed),
-            _iterations.load(std::memory_order_relaxed)
+            _iterations.load(std::memory_order_relaxed),
+            _processingSamples.load(std::memory_order_relaxed),
+            _totalProcessingDurationNanoseconds.load(std::memory_order_relaxed),
+            _minimumProcessingDurationNanoseconds.load(std::memory_order_relaxed),
+            _maximumProcessingDurationNanoseconds.load(std::memory_order_relaxed)
         };
     }
 
@@ -192,6 +208,10 @@ private:
     std::atomic<std::uint64_t> _maximumServiceLatencyNanoseconds{0U};
     std::atomic<std::uint64_t> _workSignals{0U};
     std::atomic<std::uint64_t> _iterations{0U};
+    std::atomic<std::uint64_t> _processingSamples{0U};
+    std::atomic<std::uint64_t> _totalProcessingDurationNanoseconds{0U};
+    std::atomic<std::uint64_t> _minimumProcessingDurationNanoseconds{0U};
+    std::atomic<std::uint64_t> _maximumProcessingDurationNanoseconds{0U};
 };
 
 } // namespace ESPressio::Radio
