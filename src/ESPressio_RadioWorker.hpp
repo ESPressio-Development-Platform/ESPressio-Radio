@@ -44,8 +44,8 @@ struct RadioWorkerConfiguration {
 /// Latency-critical Radio control traffic may be removed before this path by an IRadioPrioritizedIngress provider and
 /// RadioControlWorker. Async provider work is handled through PrecisionThread's dedicated work-wake path rather than by
 /// moving the periodic schedule. Queue-backed providers are serviced in a finite packet quantum so one burst cannot turn
-/// a worker pass into a drain-until-empty spin. The periodic iteration remains only the fallback for unsignalled providers
-/// and for any bounded backlog left after a wake quantum.
+/// a worker pass into a drain-until-empty spin. If bounded provider work remains, another independent work wake is queued;
+/// the periodic iteration remains only the fallback for unsignalled providers.
 /// </remarks>
 class RadioWorker final
     : public Threads::PrecisionThread<
@@ -94,16 +94,26 @@ private:
         UpdateMaximum(_maximumProcessingDurationNanoseconds, duration);
     }
 
-    void ServiceInboundQuantum() {
+    bool ServiceInboundQuantum() {
         RadioWorkerConfiguration configuration;
         {
             std::lock_guard<System::Synchronization::Mutex> lock(_configurationMutex);
             configuration = _configuration;
         }
+        bool workRemaining = false;
         for (IRadio* radio : _radios) {
             if (radio == nullptr || !radio->IsStarted()) continue;
-            (void)radio->ServiceInbound(configuration.IngressQuantumPackets);
+            const auto serviced = radio->ServiceInbound(configuration.IngressQuantumPackets);
+            workRemaining = workRemaining || serviced.WorkRemaining;
         }
+        return workRemaining;
+    }
+
+    void ContinueIfRequired(bool workRemaining) {
+        if (!workRemaining) return;
+        _continuationWakes.fetch_add(1U, std::memory_order_relaxed);
+        // Queue another finite service pass without moving the periodic fallback schedule.
+        WakeForWork();
     }
 
 public:
@@ -129,9 +139,6 @@ public:
     RadioWorker(RadioWorker&&) = delete;
     RadioWorker& operator=(RadioWorker&&) = delete;
 
-    /// <summary>
-    /// Registers a Radio with RadioTransport and makes this worker the sole standard inbound-service path.
-    /// </summary>
     bool AddInterface(IRadio& radio) noexcept {
         for (IRadio* existing : _radios) {
             if (existing == &radio) {
@@ -170,7 +177,6 @@ public:
     void OnRadioWorkAvailable(IRadio&) noexcept override {
         _workSignals.fetch_add(1U, std::memory_order_relaxed);
         try {
-            // Async ingress is independent work, not a request to move the periodic fallback schedule.
             WakeForWork();
         } catch (...) {
             // A provider work signal must never let scheduler failures escape into a driver callback context.
@@ -204,12 +210,12 @@ public:
 protected:
     void OnWorkWake() override {
         _workWakePasses.fetch_add(1U, std::memory_order_relaxed);
-        ServiceInboundQuantum();
+        ContinueIfRequired(ServiceInboundQuantum());
     }
 
     void Iterate(Time, Time, Threads::SkippedIterationCount) override {
         _iterations.fetch_add(1U, std::memory_order_relaxed);
-        ServiceInboundQuantum();
+        ContinueIfRequired(ServiceInboundQuantum());
     }
 
 private:
@@ -230,11 +236,10 @@ private:
     std::atomic<std::uint64_t> _totalServiceLatencyNanoseconds{0U};
     std::atomic<std::uint64_t> _minimumServiceLatencyNanoseconds{0U};
     std::atomic<std::uint64_t> _maximumServiceLatencyNanoseconds{0U};
-    // OnRadioWorkAvailable may execute directly in a provider driver callback. Keep this diagnostic counter at a
-    // naturally lock-free width on 32-bit targets; the public statistics snapshot widens it to uint64_t.
     std::atomic<std::uint32_t> _workSignals{0U};
     std::atomic<std::uint64_t> _iterations{0U};
     std::atomic<std::uint64_t> _workWakePasses{0U};
+    std::atomic<std::uint64_t> _continuationWakes{0U};
     std::atomic<std::uint64_t> _processingSamples{0U};
     std::atomic<std::uint64_t> _totalProcessingDurationNanoseconds{0U};
     std::atomic<std::uint64_t> _minimumProcessingDurationNanoseconds{0U};
