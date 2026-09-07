@@ -46,7 +46,22 @@ public:
     virtual void SetIngressClassifier(IRadioIngressClassifier* classifier) noexcept = 0;
     virtual void SetControlReceiver(IRadioReceiver* receiver) noexcept = 0;
     virtual void SetControlWorkSignal(IRadioWorkSignal* signal) noexcept = 0;
+
+    /// <summary>Legacy control-ingress drain hook retained for source compatibility.</summary>
     virtual void DrainControlInbound() = 0;
+
+    /// <summary>
+    /// Services one finite control-ingress quantum and reports whether queued work remains.
+    /// </summary>
+    /// <remarks>
+    /// Queue-backed providers should override this rather than spin until empty. The compatibility implementation calls
+    /// DrainControlInbound() once. A zero maximum asks the provider to apply its own finite service quantum.
+    /// </remarks>
+    virtual RadioIngressServiceResult ServiceControlInbound(std::size_t maximumPackets = 0U) {
+        (void)maximumPackets;
+        DrainControlInbound();
+        return {};
+    }
 
     virtual RadioIngressQueueStatistics StandardIngressStatistics() const noexcept = 0;
     virtual RadioIngressQueueStatistics ControlIngressStatistics() const noexcept = 0;
