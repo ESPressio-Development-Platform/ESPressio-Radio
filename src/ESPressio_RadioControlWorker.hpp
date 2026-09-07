@@ -30,6 +30,8 @@ struct RadioControlWorkerConfiguration final {
     unsigned int Priority{4U};
     /// <summary>Requested core, or -1 for no processor affinity.</summary>
     int CoreId{-1};
+    /// <summary>Maximum control packets serviced per interface in one worker pass.</summary>
+    std::size_t IngressQuantumPackets{4U};
 };
 
 /// <summary>
@@ -38,8 +40,11 @@ struct RadioControlWorkerConfiguration final {
 /// <remarks>
 /// The worker is intentionally both the provider ingress classifier and the control packet receiver. Matching performed
 /// from a driver callback is bounded to a fixed protocol array. Actual protocol work, clock discipline and response TX
-/// execute only on this PrecisionThread. Registrations are configuration-time operations and must be completed before
-/// the attached Radio is started; they are then immutable for that running Radio lifetime.
+/// execute only on this PrecisionThread. Async packet arrival uses PrecisionThread's work-wake path and does not move the
+/// periodic control-service schedule. Queue-backed providers are serviced in a finite packet quantum so a burst cannot
+/// turn one high-priority worker pass into a drain-until-empty spin.
+/// Registrations are configuration-time operations and must be completed before the attached Radio is started; they are
+/// then immutable for that running Radio lifetime.
 /// </remarks>
 class RadioControlWorker final
     : public Threads::PrecisionThread<
@@ -77,6 +82,7 @@ private:
     // naturally lock-free width on 32-bit targets; the public statistics snapshot widens it to uint64_t.
     std::atomic<std::uint32_t> _workSignals{0U};
     std::atomic<std::uint64_t> _iterations{0U};
+    std::atomic<std::uint64_t> _workWakePasses{0U};
     std::atomic<std::uint64_t> _processingSamples{0U};
     std::atomic<std::uint64_t> _totalProcessingDurationNanoseconds{0U};
     std::atomic<std::uint64_t> _minimumProcessingDurationNanoseconds{0U};
@@ -116,6 +122,13 @@ private:
         _totalProcessingDurationNanoseconds.fetch_add(duration, std::memory_order_relaxed);
         UpdateMinimum(_minimumProcessingDurationNanoseconds, duration);
         UpdateMaximum(_maximumProcessingDurationNanoseconds, duration);
+    }
+
+    void ServiceIngressQuantum() {
+        for (auto& binding : _interfaces) {
+            if (binding.Radio == nullptr || binding.Ingress == nullptr || !binding.Radio->IsStarted()) continue;
+            (void)binding.Ingress->ServiceControlInbound(_configuration.IngressQuantumPackets);
+        }
     }
 
 public:
@@ -199,7 +212,8 @@ public:
     void OnRadioWorkAvailable(IRadio&) noexcept override {
         _workSignals.fetch_add(1U, std::memory_order_relaxed);
         try {
-            Bump();
+            // Packet arrival is independent work; do not reset the periodic protocol-service cadence.
+            WakeForWork();
         } catch (...) {
             // Driver/task callback boundaries must not observe scheduler exceptions.
         }
@@ -239,16 +253,18 @@ public:
     }
 
 protected:
+    void OnWorkWake() override {
+        _workWakePasses.fetch_add(1U, std::memory_order_relaxed);
+        ServiceIngressQuantum();
+    }
+
     void Iterate(Time, Time, Threads::SkippedIterationCount) override {
         _iterations.fetch_add(1U, std::memory_order_relaxed);
 
-        // Drain first so a received request can be answered before periodic request-generation work executes.
-        for (auto& binding : _interfaces) {
-            if (binding.Radio != nullptr && binding.Ingress != nullptr && binding.Radio->IsStarted()) {
-                binding.Ingress->DrainControlInbound();
-            }
-        }
+        // Fallback ingress service supports providers whose native callbacks cannot signal the worker.
+        ServiceIngressQuantum();
 
+        // Protocol cadence is periodic and monotonic. Async RX wakes do not advance or reset this schedule.
         for (auto& binding : _protocols) {
             if (binding.Radio != nullptr && binding.Protocol != nullptr && binding.Radio->IsStarted()) {
                 binding.Protocol->ServiceControl();
