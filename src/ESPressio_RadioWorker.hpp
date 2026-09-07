@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
@@ -8,8 +9,10 @@
 #include <ESPressio_PrecisionThread.hpp>
 #include <ESPressio_PrecisionThreadTraits.hpp>
 #include <ESPressio_Synchronization.hpp>
+#include <ESPressio_SystemPlatformClock.hpp>
 #include <ESPressio_Time.hpp>
 
+#include "ESPressio_RadioControl.hpp"
 #include "ESPressio_RadioTransport.hpp"
 
 namespace ESPressio::Radio {
@@ -27,21 +30,13 @@ struct RadioWorkerConfiguration {
 };
 
 /// <summary>
-/// ESPressio PrecisionThread worker responsible only for draining physical Radio ingress and advancing Radio-owned
-/// direct-link logical reassembly.
+/// ESPressio PrecisionThread worker responsible only for draining standard physical Radio ingress and advancing
+/// Radio-owned direct-link logical reassembly.
 /// </summary>
 /// <remarks>
-/// The worker never authenticates messages, resolves Mesh routes or understands Command, Event, State or another
-/// conceptual primitive family. RadioTransport reconstructs opaque direct-link transfers and hands complete bytes to
-/// its configured receiver. Higher layers own all onward-routing and distributed semantics.
-///
-/// Callback-driven providers queue packet bytes in provider-owned bounded storage and call
-/// IRadioWorkSignal::OnRadioWorkAvailable(). The current PrecisionThread Working Branch exposes Bump() for this purpose:
-/// it advances the next iteration to the current clock time and signals the scheduler. Provider queues and hardware are
-/// drained by Iterate(), so RadioTransport processing never runs inside a Wi-Fi/ESP-NOW driver callback.
-///
-/// PrecisionThread is intentional rather than EventThread: inbound radio availability is scheduling/work state, not an
-/// ESPressio conceptual Event.
+/// Latency-critical Radio control traffic may be removed before this path by an IRadioPrioritizedIngress provider and
+/// RadioControlWorker. This worker therefore remains the standard opaque-transfer lifecycle and exposes timestamp-to-
+/// service statistics so physical tests can identify scheduling/queue delay independently of higher Mesh work.
 /// </remarks>
 class RadioWorker final
     : public Threads::PrecisionThread<
@@ -54,6 +49,34 @@ public:
     using Time = Units::NanoSeconds<uint64_t>;
     using Base = Threads::PrecisionThread<Time, Threads::PrecisionThreadTraits<Time>>;
 
+private:
+    static void UpdateMinimum(std::atomic<std::uint64_t>& target, std::uint64_t value) noexcept {
+        auto current = target.load(std::memory_order_relaxed);
+        while ((current == 0U || value < current) &&
+               !target.compare_exchange_weak(
+                   current, value, std::memory_order_relaxed, std::memory_order_relaxed)) {}
+    }
+
+    static void UpdateMaximum(std::atomic<std::uint64_t>& target, std::uint64_t value) noexcept {
+        auto current = target.load(std::memory_order_relaxed);
+        while (value > current &&
+               !target.compare_exchange_weak(
+                   current, value, std::memory_order_relaxed, std::memory_order_relaxed)) {}
+    }
+
+    void RecordServiceLatency(const RadioPacketView& packet) noexcept {
+        _packetsServiced.fetch_add(1U, std::memory_order_relaxed);
+        if (packet.ReceiveTimestampNanoseconds == 0U) return;
+        const auto now = System::Clock::Monotonic().NowNanoseconds();
+        if (now < packet.ReceiveTimestampNanoseconds) return;
+        const auto latency = now - packet.ReceiveTimestampNanoseconds;
+        _timestampedPackets.fetch_add(1U, std::memory_order_relaxed);
+        _totalServiceLatencyNanoseconds.fetch_add(latency, std::memory_order_relaxed);
+        UpdateMinimum(_minimumServiceLatencyNanoseconds, latency);
+        UpdateMaximum(_maximumServiceLatencyNanoseconds, latency);
+    }
+
+public:
     explicit RadioWorker(
         RadioTransport& transport,
         RadioWorkerConfiguration configuration = {}
@@ -77,7 +100,7 @@ public:
     RadioWorker& operator=(RadioWorker&&) = delete;
 
     /// <summary>
-    /// Registers a Radio with RadioTransport and makes this worker the sole inbound-service path for that interface.
+    /// Registers a Radio with RadioTransport and makes this worker the sole standard inbound-service path.
     /// </summary>
     bool AddInterface(IRadio& radio) noexcept {
         for (IRadio* existing : _radios) {
@@ -100,13 +123,11 @@ public:
         return false;
     }
 
-    /// <summary>Returns a copy of the worker scheduling configuration.</summary>
     RadioWorkerConfiguration Configuration() const {
         std::lock_guard<System::Synchronization::Mutex> lock(_configurationMutex);
         return _configuration;
     }
 
-    /// <summary>Updates the PrecisionThread cadence/execution budget used for inbound servicing.</summary>
     void Configure(RadioWorkerConfiguration configuration) {
         {
             std::lock_guard<System::Synchronization::Mutex> lock(_configurationMutex);
@@ -116,11 +137,8 @@ public:
         Bump();
     }
 
-    /// <summary>
-    /// Requests an immediate worker iteration after a concrete provider has queued asynchronous inbound work.
-    /// No packet parsing, routing, authentication or observer dispatch occurs on the provider callback thread.
-    /// </summary>
     void OnRadioWorkAvailable(IRadio&) noexcept override {
+        _workSignals.fetch_add(1U, std::memory_order_relaxed);
         try {
             Bump();
         } catch (...) {
@@ -128,42 +146,52 @@ public:
         }
     }
 
-    /// <summary>
-    /// Receives one provider-drained physical packet on the RadioWorker thread and advances Radio-level reassembly.
-    /// </summary>
     void OnRadioPacket(IRadio& radio, const RadioPacketView& packet) override {
+        RecordServiceLatency(packet);
         _transport.ProcessInboundPacket(radio, packet);
         radio.Observers().NotifyPacketReceived(radio, packet);
     }
 
+    RadioWorkerLatencyStatistics GetStatistics() const noexcept {
+        return {
+            _packetsServiced.load(std::memory_order_relaxed),
+            _timestampedPackets.load(std::memory_order_relaxed),
+            _totalServiceLatencyNanoseconds.load(std::memory_order_relaxed),
+            _minimumServiceLatencyNanoseconds.load(std::memory_order_relaxed),
+            _maximumServiceLatencyNanoseconds.load(std::memory_order_relaxed),
+            _workSignals.load(std::memory_order_relaxed),
+            _iterations.load(std::memory_order_relaxed)
+        };
+    }
+
 protected:
-    /// <summary>Services all attached radio interfaces for currently available inbound packets.</summary>
-    void Iterate(
-        Time,
-        Time,
-        Threads::SkippedIterationCount
-    ) override {
+    void Iterate(Time, Time, Threads::SkippedIterationCount) override {
+        _iterations.fetch_add(1U, std::memory_order_relaxed);
         for (IRadio* radio : _radios) {
-            if (radio != nullptr && radio->IsStarted()) {
-                radio->DrainInbound();
-            }
+            if (radio != nullptr && radio->IsStarted()) radio->DrainInbound();
         }
     }
 
 private:
     void ApplyRuntimeConfiguration(const RadioWorkerConfiguration& configuration) {
         SetIterationPeriod(
-            Units::MilliSeconds<uint32_t>(configuration.IterationPeriodMilliseconds)
-        );
+            Units::MilliSeconds<uint32_t>(configuration.IterationPeriodMilliseconds));
         SetDesiredIterationPeriod(
-            Units::MilliSeconds<uint32_t>(configuration.DesiredExecutionBudgetMilliseconds)
-        );
+            Units::MilliSeconds<uint32_t>(configuration.DesiredExecutionBudgetMilliseconds));
     }
 
     RadioTransport& _transport;
     std::array<IRadio*, ESPRESSIO_RADIO_MAX_INTERFACES> _radios{};
     mutable System::Synchronization::Mutex _configurationMutex;
     RadioWorkerConfiguration _configuration{};
+
+    std::atomic<std::uint64_t> _packetsServiced{0U};
+    std::atomic<std::uint64_t> _timestampedPackets{0U};
+    std::atomic<std::uint64_t> _totalServiceLatencyNanoseconds{0U};
+    std::atomic<std::uint64_t> _minimumServiceLatencyNanoseconds{0U};
+    std::atomic<std::uint64_t> _maximumServiceLatencyNanoseconds{0U};
+    std::atomic<std::uint64_t> _workSignals{0U};
+    std::atomic<std::uint64_t> _iterations{0U};
 };
 
 } // namespace ESPressio::Radio
