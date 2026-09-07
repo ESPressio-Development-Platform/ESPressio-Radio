@@ -11,7 +11,7 @@
 #include <ESPressio_SystemPlatformClock.hpp>
 #include <ESPressio_Synchronization.hpp>
 
-#include "ESPressio_IRadio.hpp"
+#include "ESPressio_RadioControl.hpp"
 
 namespace ESPressio::Radio {
 
@@ -46,33 +46,38 @@ struct RadioClockSynchronizationStatistics {
 
 /// <summary>Performs four-timestamp clock synchronization directly over any ESPressio IRadio implementation.</summary>
 /// <remarks>
-/// The synchronizer is independent of RadioTransport routing/fragmentation and Foundation-Type semantics. Its largest wire
-/// representation is exactly 32 bytes, so even an nRF24-class radio can carry the complete T1/T2/T3 response atomically.
-/// RadioTransport sees these link-local control packets first through RadioWorker and ignores them because their wire magic
-/// differs from RadioTransport framing; the synchronizer then consumes them through IRadioPacketObserver.
+/// Clock synchronization is a Radio-owned latency-critical control protocol. It is intentionally independent of
+/// RadioTransport routing/fragmentation and Foundation-Type semantics. Its largest wire representation is exactly 32
+/// bytes, so even an nRF24-class radio can carry the complete T1/T2/T3 response atomically.
 ///
-/// T1 is captured immediately before request transmission. T2 and T4 are recovered from provider-captured monotonic receive
-/// timestamps where available. T3 is captured immediately before response transmission. Timing remains solely responsible
-/// for offset/delay estimation, filtering, drift learning and clock discipline.
+/// `MatchesControlFrame()` is deliberately tiny and allocation-free because a prioritized Radio provider may call it
+/// from its driver callback to classify opaque ingress as Control vs Standard. All real protocol work executes later on
+/// `RadioControlWorker` through `ProcessControlPacket()` / `ServiceControl()`; clock packets therefore never need to wait
+/// behind ordinary RadioTransport traffic.
 ///
-/// At most one client exchange may be outstanding. A new interval never replaces a still-pending sequence: once the
-/// synchronization interval has elapsed the unanswered exchange is expired before a new request is issued. This prevents
-/// delayed responses from being mis-correlated and avoids self-inflicted synchronization traffic under scheduling delay.
+/// T1 is captured immediately before request transmission. T2 and T4 are recovered from provider-captured monotonic RX
+/// timestamps where available. T3 is captured immediately before response transmission. Timing remains solely
+/// responsible for offset/delay estimation, filtering, drift learning and clock discipline.
 ///
-/// Requests also carry the client's opaque RadioAddress. Radios such as nRF24 do not expose the transmitter address on RX;
-/// when packet.Source is unavailable the reference therefore replies to this embedded address. When Source is available it
-/// takes precedence and must agree with the embedded address.
+/// At most one client exchange may be outstanding. A new interval never replaces a still-pending sequence. Once a full
+/// synchronization interval has elapsed, an unanswered exchange is expired before another request is issued. This
+/// prevents delayed responses from being mis-correlated and avoids self-inflicted synchronization traffic under load.
 ///
-/// ReceiveTimestampNanoseconds is expected to use the active System::Clock::Monotonic() nanosecond domain. Providers that
-/// cannot supply such a timestamp may leave it zero; unless RequireReceiveTimestamp is true, synchronization falls back to
-/// the RadioWorker observer-callback time with reduced precision.
+/// Requests also carry the client's opaque RadioAddress. Radios such as nRF24 need not expose transmitter address on RX;
+/// when packet.Source is unavailable the reference replies to this embedded address. When Source is available it takes
+/// precedence and must agree with the embedded address.
+///
+/// ReceiveTimestampNanoseconds is expected to use `System::Clock::Monotonic()` nanoseconds. Providers that cannot supply
+/// it may leave it zero; unless RequireReceiveTimestamp is true, synchronization falls back to control-worker service time
+/// with reduced precision.
 /// </remarks>
-class RadioClockSynchronizer final : public IRadioPacketObserver {
+class RadioClockSynchronizer final : public IRadioControlProtocol {
 private:
     enum class MessageType : uint8_t { Request = 1, Response = 2 };
 
     static constexpr uint16_t WireMagic = 0x5953u;
     static constexpr uint8_t WireVersion = 1u;
+    static constexpr std::size_t ControlClassifierBytes = 4u;
     static constexpr std::size_t HeaderBytes = 8u;
     static constexpr std::size_t RequestTimestampOffset = HeaderBytes;
     static constexpr std::size_t RequestAddressLengthOffset = 16u;
@@ -83,7 +88,6 @@ private:
     IRadio* _radio = nullptr;
     Timing::IClockSynchronizationTarget<Timing::ClockTick>* _target = nullptr;
     RadioClockSynchronizationConfig _config{};
-    Observable::ObserverHandlePtr _packetSubscription{};
 
     std::atomic<uint32_t> _nextSequence{1};
     std::atomic<uint32_t> _pendingSequence{0};
@@ -248,11 +252,9 @@ private:
             _ignoredFrames.fetch_add(1, std::memory_order_relaxed);
             return;
         }
-        if (
-            packet.Source.IsValid() &&
+        if (packet.Source.IsValid() &&
             config.ReferencePeer.IsValid() &&
-            packet.Source != config.ReferencePeer
-        ) {
+            packet.Source != config.ReferencePeer) {
             _ignoredFrames.fetch_add(1, std::memory_order_relaxed);
             return;
         }
@@ -285,10 +287,8 @@ public:
         _target(
             target == nullptr
                 ? static_cast<Timing::IClockSynchronizationTarget<Timing::ClockTick>*>(
-                    &Timing::SystemClock<>::GetInstance()
-                  )
-                : target
-        ) {}
+                    &Timing::SystemClock<>::GetInstance())
+                : target) {}
 
     ~RadioClockSynchronizer() override { Shutdown(); }
 
@@ -309,11 +309,9 @@ public:
         if (IsClientMode(config.Mode)) {
             const RadioAddress localAddress = _radio->LocalAddress();
             if (!config.ReferencePeer.IsValid() || !localAddress.IsValid()) return false;
-            if (
-                capabilities.AddressBytes != 0 &&
+            if (capabilities.AddressBytes != 0 &&
                 (config.ReferencePeer.Length != capabilities.AddressBytes ||
-                 localAddress.Length != capabilities.AddressBytes)
-            ) {
+                 localAddress.Length != capabilities.AddressBytes)) {
                 return false;
             }
         }
@@ -322,14 +320,6 @@ public:
             std::lock_guard<System::Synchronization::Mutex> lock(_stateMutex);
             _config = config;
         }
-
-        try {
-            _packetSubscription = _radio->Observers().Subscribe<IRadioPacketObserver>(this);
-        } catch (...) {
-            _packetSubscription.reset();
-            return false;
-        }
-        if (!_packetSubscription) return false;
 
         _pendingSequence.store(0, std::memory_order_release);
         _lastRequestMonotonicNanoseconds.store(0, std::memory_order_release);
@@ -341,7 +331,6 @@ public:
         _initialized.store(false, std::memory_order_release);
         _pendingSequence.store(0, std::memory_order_release);
         _lastRequestMonotonicNanoseconds.store(0, std::memory_order_release);
-        _packetSubscription.reset();
     }
 
     RadioSendResult RequestSynchronization() {
@@ -378,11 +367,9 @@ public:
         request[RequestAddressLengthOffset] = localAddress.Length;
         std::memcpy(request + RequestAddressOffset, localAddress.Bytes.data(), localAddress.Length);
         _pendingSequence.store(sequence, std::memory_order_release);
-
         _lastRequestMonotonicNanoseconds.store(
             System::Clock::Monotonic().NowNanoseconds(),
-            std::memory_order_release
-        );
+            std::memory_order_release);
 
         const RadioSendResult result = _radio->Send(config.ReferencePeer, request, sizeof(request));
         if (result) {
@@ -396,41 +383,62 @@ public:
         return result;
     }
 
-    void Update() {
-        if (!_initialized.load(std::memory_order_acquire)) return;
-        const RadioClockSynchronizationConfig config = ConfigSnapshot();
-        if (!IsClientMode(config.Mode) || config.SynchronizationIntervalMilliseconds == 0) return;
-
-        const uint64_t now = System::Clock::Monotonic().NowNanoseconds();
-        const uint64_t interval =
-            static_cast<uint64_t>(config.SynchronizationIntervalMilliseconds) * 1000000ULL;
-        const uint64_t last = _lastRequestMonotonicNanoseconds.load(std::memory_order_acquire);
-        if (last != 0U && now - last < interval) return;
-
-        const uint32_t pending = _pendingSequence.load(std::memory_order_acquire);
-        if (pending != 0U) {
-            uint32_t expected = pending;
-            (void)_pendingSequence.compare_exchange_strong(
-                expected, 0U, std::memory_order_acq_rel, std::memory_order_acquire);
-        }
-        (void)RequestSynchronization();
+    bool MatchesControlFrame(
+        const IRadio& radio,
+        const std::uint8_t* payload,
+        std::size_t payloadBytes
+    ) const noexcept override {
+        if (&radio != _radio || payload == nullptr || payloadBytes < ControlClassifierBytes) return false;
+        if (ReadU16(payload) != WireMagic || payload[2] != WireVersion) return false;
+        return payload[3] == static_cast<uint8_t>(MessageType::Request) ||
+               payload[3] == static_cast<uint8_t>(MessageType::Response);
     }
 
-    void OnRadioPacketReceived(IRadio& radio, const RadioPacketView& packet) override {
+    void ProcessControlPacket(IRadio& radio, const RadioPacketView& packet) noexcept override {
         if (!_initialized.load(std::memory_order_acquire) || &radio != _radio) return;
+        try {
+            MessageType type = MessageType::Request;
+            uint32_t sequence = 0;
+            if (!DecodeHeader(packet, type, sequence)) {
+                _ignoredFrames.fetch_add(1, std::memory_order_relaxed);
+                return;
+            }
 
-        MessageType type = MessageType::Request;
-        uint32_t sequence = 0;
-        if (!DecodeHeader(packet, type, sequence)) return;
+            const RadioClockSynchronizationConfig config = ConfigSnapshot();
+            if (config.RequireReceiveTimestamp && packet.ReceiveTimestampNanoseconds == 0) {
+                _ignoredFrames.fetch_add(1, std::memory_order_relaxed);
+                return;
+            }
 
-        const RadioClockSynchronizationConfig config = ConfigSnapshot();
-        if (config.RequireReceiveTimestamp && packet.ReceiveTimestampNanoseconds == 0) {
+            if (type == MessageType::Request) ProcessRequest(radio, packet, sequence, config);
+            else ProcessResponse(packet, sequence, config);
+        } catch (...) {
             _ignoredFrames.fetch_add(1, std::memory_order_relaxed);
-            return;
         }
+    }
 
-        if (type == MessageType::Request) ProcessRequest(radio, packet, sequence, config);
-        else ProcessResponse(packet, sequence, config);
+    void ServiceControl() noexcept override {
+        if (!_initialized.load(std::memory_order_acquire)) return;
+        try {
+            const RadioClockSynchronizationConfig config = ConfigSnapshot();
+            if (!IsClientMode(config.Mode) || config.SynchronizationIntervalMilliseconds == 0) return;
+
+            const uint64_t now = System::Clock::Monotonic().NowNanoseconds();
+            const uint64_t interval =
+                static_cast<uint64_t>(config.SynchronizationIntervalMilliseconds) * 1000000ULL;
+            const uint64_t last = _lastRequestMonotonicNanoseconds.load(std::memory_order_acquire);
+            if (last != 0U && now >= last && now - last < interval) return;
+
+            const uint32_t pending = _pendingSequence.load(std::memory_order_acquire);
+            if (pending != 0U) {
+                uint32_t expected = pending;
+                (void)_pendingSequence.compare_exchange_strong(
+                    expected, 0U, std::memory_order_acq_rel, std::memory_order_acquire);
+            }
+            (void)RequestSynchronization();
+        } catch (...) {
+            _sendFailures.fetch_add(1, std::memory_order_relaxed);
+        }
     }
 
     bool GetIsInitialized() const noexcept {
