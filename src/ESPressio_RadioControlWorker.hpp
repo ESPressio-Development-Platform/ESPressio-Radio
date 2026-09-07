@@ -72,7 +72,9 @@ private:
     std::atomic<std::uint64_t> _totalServiceLatencyNanoseconds{0U};
     std::atomic<std::uint64_t> _minimumServiceLatencyNanoseconds{0U};
     std::atomic<std::uint64_t> _maximumServiceLatencyNanoseconds{0U};
-    std::atomic<std::uint64_t> _workSignals{0U};
+    // OnRadioWorkAvailable may execute directly in a provider driver callback. Keep this diagnostic counter at a
+    // naturally lock-free width on 32-bit targets; the public statistics snapshot widens it to uint64_t.
+    std::atomic<std::uint32_t> _workSignals{0U};
     std::atomic<std::uint64_t> _iterations{0U};
     std::atomic<std::uint64_t> _processingSamples{0U};
     std::atomic<std::uint64_t> _totalProcessingDurationNanoseconds{0U};
@@ -221,7 +223,7 @@ public:
             _totalServiceLatencyNanoseconds.load(std::memory_order_relaxed),
             _minimumServiceLatencyNanoseconds.load(std::memory_order_relaxed),
             _maximumServiceLatencyNanoseconds.load(std::memory_order_relaxed),
-            _workSignals.load(std::memory_order_relaxed),
+            static_cast<std::uint64_t>(_workSignals.load(std::memory_order_relaxed)),
             _iterations.load(std::memory_order_relaxed),
             _processingSamples.load(std::memory_order_relaxed),
             _totalProcessingDurationNanoseconds.load(std::memory_order_relaxed),
