@@ -16,6 +16,8 @@ jobs:
         run: git clone --depth 1 --branch structural_realignment_propagation_ESPressio-Mesh https://github.com/ESPressio-Development-Platform/ESPressio-System.git deps/System
       - name: Checkout ESPressio Observable structural_realignment
         run: git clone --depth 1 --branch structural_realignment https://github.com/ESPressio-Development-Platform/ESPressio-Observable.git deps/Observable
+      - name: Checkout ESPressio Timing propagation branch
+        run: git clone --depth 1 --branch structural_realignment_propagation_ESPressio-Mesh https://github.com/ESPressio-Development-Platform/ESPressio-Timing.git deps/Timing
       - name: Build transport tests
         run: g++ -std=c++17 -Wall -Wextra -Werror -Isrc -Ideps/System/src -Ideps/Observable/src tests/radio_transport_tests.cpp -o radio_transport_tests -pthread
       - name: Run transport tests
@@ -52,6 +54,10 @@ jobs:
         run: g++ -std=c++17 -Wall -Wextra -Werror -Itests/clock_stubs -Isrc -Ideps/System/src -Ideps/Observable/src tests/radio_clock_synchronizer_tests.cpp -o radio_clock_synchronizer_tests -pthread
       - name: Run clock synchronization protocol tests
         run: ./radio_clock_synchronizer_tests
+      - name: Build classified clock rejection diagnostics regression
+        run: g++ -std=c++17 -Wall -Wextra -Werror -Isrc -Ideps/Timing/test_support -Ideps/Timing/src tests/radio_clock_synchronization_diagnostics_tests.cpp -o radio_clock_synchronization_diagnostics_tests -pthread
+      - name: Run classified clock rejection diagnostics regression
+        run: ./radio_clock_synchronization_diagnostics_tests
 
   esp32-worker:
     runs-on: ubuntu-latest
