@@ -67,6 +67,10 @@ private:
     Timing::ClockSynchronizationStatus<Timing::ClockTick> _status{};
 };
 
+/// <summary>
+/// Host fake that routes recognized control bytes directly to IRadioControlProtocol and records any packet which would
+/// otherwise have fallen through to the standard Radio receiver/observer lifecycle.
+/// </summary>
 class FakeClockRadio final : public IRadio {
 public:
     FakeClockRadio(
@@ -81,6 +85,7 @@ public:
 
     void Connect(FakeClockRadio& peer) noexcept { _peer = &peer; }
     void SetDeliveryEnabled(bool enabled) noexcept { _deliveryEnabled = enabled; }
+    void AttachControlProtocol(IRadioControlProtocol& protocol) noexcept { _controlProtocol = &protocol; }
 
     bool Start() override {
         _started = true;
@@ -128,7 +133,16 @@ public:
         packet.ReceiveTimestampNanoseconds = _peer->_timestamped
             ? System::Clock::Monotonic().NowNanoseconds()
             : 0;
-        _peer->_observers.NotifyPacketReceived(*_peer, packet);
+
+        if (_peer->_controlProtocol != nullptr &&
+            _peer->_controlProtocol->MatchesControlFrame(*_peer, payload, payloadSize)) {
+            ++_peer->ControlDeliveries;
+            _peer->_controlProtocol->ProcessControlPacket(*_peer, packet);
+        } else {
+            ++_peer->StandardDeliveries;
+            if (_peer->_receiver != nullptr) _peer->_receiver->OnRadioPacket(*_peer, packet);
+            _peer->_observers.NotifyPacketReceived(*_peer, packet);
+        }
         return complete(RadioSendResult::Accepted());
     }
 
@@ -136,6 +150,9 @@ public:
     void SetWorkSignal(IRadioWorkSignal* signal) noexcept override { _workSignal = signal; }
     void DrainInbound() override {}
     RadioObserverSubscriptions& Observers() noexcept override { return _observers; }
+
+    std::uint32_t ControlDeliveries{0U};
+    std::uint32_t StandardDeliveries{0U};
 
 private:
     RadioAddress _local{};
@@ -146,11 +163,22 @@ private:
     bool _started = false;
     IRadioReceiver* _receiver = nullptr;
     IRadioWorkSignal* _workSignal = nullptr;
+    IRadioControlProtocol* _controlProtocol = nullptr;
     RadioObserverSubscriptions _observers{};
     FakeClockRadio* _peer = nullptr;
 };
 
-static void TestFourTimestampExchangeAtNrf24Mtu() {
+static void AttachPair(
+    FakeClockRadio& clientRadio,
+    RadioClockSynchronizer& client,
+    FakeClockRadio& referenceRadio,
+    RadioClockSynchronizer& reference
+) {
+    clientRadio.AttachControlProtocol(client);
+    referenceRadio.AttachControlProtocol(reference);
+}
+
+static void TestFourTimestampExchangeAtNrf24MtuUsesControlPath() {
     FakeClockRadio clientRadio(0xA1, true, 32);
     FakeClockRadio referenceRadio(0xB1, true, 32);
     clientRadio.Connect(referenceRadio);
@@ -174,8 +202,10 @@ static void TestFourTimestampExchangeAtNrf24Mtu() {
     clientConfig.RequireReceiveTimestamp = true;
     clientConfig.AdjustmentMode = Timing::ClockSynchronizationAdjustmentMode::StepIfUnsynchronized;
     assert(client.Initialize(clientConfig));
+    AttachPair(clientRadio, client, referenceRadio, reference);
 
-    assert(client.RequestSynchronization());
+    // RadioControlWorker calls ServiceControl periodically; the first client service issues the exchange.
+    client.ServiceControl();
     assert(clientTarget.SubmittedSamples == 1);
     assert(clientTarget.LastAdjustmentMode == Timing::ClockSynchronizationAdjustmentMode::StepIfUnsynchronized);
     assert(clientTarget.LastSample.LocalRequestTransmitTime != 0);
@@ -193,6 +223,12 @@ static void TestFourTimestampExchangeAtNrf24Mtu() {
     assert(clientStats.TimestampFallbacks == 0);
     assert(referenceStats.RequestsReceived == 1);
     assert(referenceStats.ResponsesSent == 1);
+
+    // The request and response were classified as control and never entered the standard packet lifecycle.
+    assert(referenceRadio.ControlDeliveries == 1U);
+    assert(clientRadio.ControlDeliveries == 1U);
+    assert(referenceRadio.StandardDeliveries == 0U);
+    assert(clientRadio.StandardDeliveries == 0U);
 }
 
 static void TestSourceLessRadioUsesEmbeddedRequesterAddress() {
@@ -216,6 +252,7 @@ static void TestSourceLessRadioUsesEmbeddedRequesterAddress() {
     clientConfig.Mode = RadioClockSynchronizationMode::Client;
     clientConfig.ReferencePeer = referenceRadio.LocalAddress();
     assert(client.Initialize(clientConfig));
+    AttachPair(clientRadio, client, referenceRadio, reference);
 
     assert(client.RequestSynchronization());
     assert(clientTarget.SubmittedSamples == 1);
@@ -224,6 +261,7 @@ static void TestSourceLessRadioUsesEmbeddedRequesterAddress() {
     assert(client.GetStatistics().ResponsesReceived == 1);
     assert(client.GetStatistics().TimestampFallbacks == 1);
     assert(reference.GetStatistics().TimestampFallbacks == 1);
+    assert(clientRadio.StandardDeliveries == 0U && referenceRadio.StandardDeliveries == 0U);
 }
 
 static void TestTimestampFallbackAndStrictRequirement() {
@@ -253,6 +291,8 @@ static void TestTimestampFallbackAndStrictRequirement() {
     clientConfig.Mode = RadioClockSynchronizationMode::Client;
     clientConfig.ReferencePeer = referenceRadio.LocalAddress();
     assert(client.Initialize(clientConfig));
+    AttachPair(clientRadio, client, referenceRadio, reference);
+
     assert(client.RequestSynchronization());
     assert(clientTarget.SubmittedSamples == 1);
     assert(client.GetStatistics().TimestampFallbacks == 1);
@@ -286,6 +326,16 @@ static void TestOutstandingExchangeIsNotReplaced() {
     assert(clientTarget.SubmittedSamples == 0U);
 }
 
+static void TestControlMatcherIsBoundedToClockWirePrefix() {
+    FakeClockRadio radio(0xA6, true, 32);
+    FakeSynchronizationTarget target;
+    RadioClockSynchronizer synchronizer(radio, &target);
+
+    const std::uint8_t unrelated[8]{0x52U, 0x54U, 0x01U, 0x01U, 0U, 0U, 0U, 1U};
+    assert(!synchronizer.MatchesControlFrame(radio, unrelated, sizeof(unrelated)));
+    assert(!synchronizer.MatchesControlFrame(radio, unrelated, 3U));
+}
+
 static void TestMtuBelowResponseSizeIsRejected() {
     FakeClockRadio radio(0xA3, true, 31);
     FakeSynchronizationTarget target;
@@ -296,10 +346,11 @@ static void TestMtuBelowResponseSizeIsRejected() {
 }
 
 int main() {
-    TestFourTimestampExchangeAtNrf24Mtu();
+    TestFourTimestampExchangeAtNrf24MtuUsesControlPath();
     TestSourceLessRadioUsesEmbeddedRequesterAddress();
     TestTimestampFallbackAndStrictRequirement();
     TestOutstandingExchangeIsNotReplaced();
+    TestControlMatcherIsBoundedToClockWirePrefix();
     TestMtuBelowResponseSizeIsRejected();
     return 0;
 }
