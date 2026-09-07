@@ -13,7 +13,7 @@ class IRadio;
 /// <summary>Receives complete link-layer packets from a concrete radio provider.</summary>
 /// <remarks>
 /// The packet payload is borrowed and is valid only for the duration of the callback. RadioWorker installs itself as
-/// the receiver so link callbacks/driver queues are drained on the ESPressio worker thread before RadioTransport sees them.
+/// the receiver so link callbacks/driver queues are serviced on the ESPressio worker thread before RadioTransport sees them.
 /// </remarks>
 class IRadioReceiver {
 public:
@@ -24,9 +24,9 @@ public:
 /// <summary>Receives a lightweight task-context signal that a radio has queued inbound work.</summary>
 /// <remarks>
 /// A concrete provider may invoke this after placing data in bounded provider-owned storage when already running in a
-/// task/driver-callback context that may safely wake an ESPressio PrecisionThread. A hardware ISR must not invoke this
-/// contract directly; ISR-backed providers must defer the wake into an ISR-safe handoff/task context first. The signal
-/// itself must remain non-blocking and must never perform packet parsing, routing, authentication, or Foundation-Type work.
+/// task/driver-callback context that may safely wake an ESPressio worker. A hardware ISR must not invoke this contract
+/// directly; ISR-backed providers must defer the wake into an ISR-safe handoff/task context first. The signal itself
+/// must remain non-blocking and must never perform packet parsing, routing, authentication, or Foundation-Type work.
 /// </remarks>
 class IRadioWorkSignal {
 public:
@@ -34,11 +34,22 @@ public:
     virtual void OnRadioWorkAvailable(IRadio& radio) noexcept = 0;
 };
 
+/// <summary>Result of one bounded provider-ingress service quantum.</summary>
+/// <remarks>
+/// WorkRemaining describes provider-owned ingress that was already queued when the service quantum completed. It lets
+/// a worker schedule a continuation without requiring a provider to spin until empty. PacketsProcessed is diagnostic
+/// evidence only and need not equal the number of native frames inspected by a provider.
+/// </remarks>
+struct RadioIngressServiceResult final {
+    std::uint32_t PacketsProcessed{0U};
+    bool WorkRemaining{false};
+};
+
 /// <summary>Hardware-neutral bounded-packet radio contract.</summary>
 /// <remarks>
 /// Implementations transport opaque bytes only. They do not understand ESPressio primitives, application routing,
 /// authentication, serialization, or message semantics. Inbound processing is owned by RadioWorker: providers queue
-/// callback-driven traffic where necessary and expose that queued/hardware traffic only through DrainInbound().
+/// callback-driven traffic where necessary and expose that queued/hardware traffic only through the worker service API.
 /// </remarks>
 class IRadio {
 public:
@@ -64,10 +75,24 @@ public:
     virtual void SetWorkSignal(IRadioWorkSignal* signal) noexcept = 0;
 
     /// <summary>
-    /// Drains currently available inbound link packets into the worker-owned receiver.
-    /// This is an internal RadioWorker operation, not an application polling API or independent scheduling layer.
+    /// Legacy provider ingress hook. New queued providers should override ServiceInbound() with a bounded service quantum.
     /// </summary>
     virtual void DrainInbound() = 0;
+
+    /// <summary>
+    /// Services at most <paramref name="maximumPackets"/> queued inbound packets and reports whether work remains.
+    /// </summary>
+    /// <remarks>
+    /// This is an internal RadioWorker operation, not an application polling API. The default compatibility path calls
+    /// DrainInbound() once for providers that pre-date bounded ingress service. Queue-backed providers should override
+    /// this method so one worker invocation can never become an unbounded drain-until-empty loop. A value of zero asks
+    /// the provider to use its own finite service quantum; it never means unbounded work.
+    /// </remarks>
+    virtual RadioIngressServiceResult ServiceInbound(std::size_t maximumPackets = 0U) {
+        (void)maximumPackets;
+        DrainInbound();
+        return {};
+    }
 
     /// <summary>Gets the ESPressio Observable callback-subscription surface for this radio.</summary>
     virtual RadioObserverSubscriptions& Observers() noexcept = 0;
