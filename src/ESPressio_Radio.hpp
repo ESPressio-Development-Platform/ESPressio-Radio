@@ -11,3 +11,4 @@
 #include "ESPressio_RadioWorker.hpp"
 #include "ESPressio_RadioControlWorker.hpp"
 #include "ESPressio_RadioClockSynchronizer.hpp"
+#include "ESPressio_RadioClockSynchronizationDiagnostics.hpp"
