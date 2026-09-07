@@ -37,7 +37,7 @@
     },
     {
       "name":"ESPressio-Event",
-      "version":"https://github.com/ESPressio-Development-Platform/ESPressio-Event.git#structural_realignment",
+      "version":"https://github.com/ESPressio-Development-Platform/ESPressio-Event.git#structural_realignment_propagation_ESPressio-Mesh",
       "platforms":"espressif32"
     }
   ]
