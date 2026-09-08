@@ -98,29 +98,29 @@ public:
     using Base = Threads::PrecisionThread<Time, Threads::PrecisionThreadTraits<Time>>;
 
 private:
-        /**
-     * ESPressio Memory Audit
-     * Members:
-     * - Radio (IRadio*): 4 bytes [0 bytes dynamic allocation]
-     * - Ingress (IRadioPrioritizedIngress*): 4 bytes [0 bytes dynamic allocation]
-     * Total Memory: 8 bytes [0 bytes dynamic allocation]
-     * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
-     * End ESPressio Memory Audit
-     */
+/**
+ * ESPressio Memory Audit
+ * Members:
+ * - Radio (IRadio*): 4 bytes [0 bytes dynamic allocation]
+ * - Ingress (IRadioPrioritizedIngress*): 4 bytes [0 bytes dynamic allocation]
+ * Total Memory: 8 bytes [0 bytes dynamic allocation]
+ * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
+ * End ESPressio Memory Audit
+ */
 struct InterfaceBinding final {
         IRadio* Radio{nullptr};
         IRadioPrioritizedIngress* Ingress{nullptr};
     };
 
-        /**
-     * ESPressio Memory Audit
-     * Members:
-     * - Radio (IRadio*): 4 bytes [0 bytes dynamic allocation]
-     * - Protocol (IRadioControlProtocol*): 4 bytes [0 bytes dynamic allocation]
-     * Total Memory: 8 bytes [0 bytes dynamic allocation]
-     * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
-     * End ESPressio Memory Audit
-     */
+/**
+ * ESPressio Memory Audit
+ * Members:
+ * - Radio (IRadio*): 4 bytes [0 bytes dynamic allocation]
+ * - Protocol (IRadioControlProtocol*): 4 bytes [0 bytes dynamic allocation]
+ * Total Memory: 8 bytes [0 bytes dynamic allocation]
+ * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
+ * End ESPressio Memory Audit
+ */
 struct ProtocolBinding final {
         IRadio* Radio{nullptr};
         IRadioControlProtocol* Protocol{nullptr};

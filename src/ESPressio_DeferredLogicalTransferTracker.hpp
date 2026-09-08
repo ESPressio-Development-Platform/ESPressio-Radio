@@ -174,13 +174,13 @@ class DeferredLogicalTransferTracker final : public IDeferredLogicalTransferTrac
     static_assert(Capacity > 0U, "Deferred logical-transfer capacity must be explicit and non-zero.");
     static_assert(Capacity <= std::numeric_limits<std::uint16_t>::max(), "Capacity must fit the handle slot.");
 
-        /**
-     * ESPressio Memory Audit
-     * Underlying storage: 1 bytes
-     * Total Memory: 1 bytes [0 bytes dynamic allocation]
-     * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
-     * End ESPressio Memory Audit
-     */
+/**
+ * ESPressio Memory Audit
+ * Underlying storage: 1 bytes
+ * Total Memory: 1 bytes [0 bytes dynamic allocation]
+ * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
+ * End ESPressio Memory Audit
+ */
 enum class FragmentState : std::uint8_t {
         Unregistered,
         TerminalCompleted,
@@ -189,17 +189,17 @@ enum class FragmentState : std::uint8_t {
         Unobservable
     };
 
-        /**
-     * ESPressio Memory Audit
-     * Members:
-     * - State (FragmentState): 1 bytes [0 bytes dynamic allocation]
-     * - Radio (IRadio*): 4 bytes [0 bytes dynamic allocation]
-     * - Transmission (RadioTransmissionHandle): 4 bytes [0 bytes dynamic allocation]
-     * - PeerAcknowledgement (RadioPeerAcknowledgement): 1 bytes [0 bytes dynamic allocation]
-     * Total Memory: 16 bytes [0 bytes dynamic allocation]
-     * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
-     * End ESPressio Memory Audit
-     */
+/**
+ * ESPressio Memory Audit
+ * Members:
+ * - State (FragmentState): 1 bytes [0 bytes dynamic allocation]
+ * - Radio (IRadio*): 4 bytes [0 bytes dynamic allocation]
+ * - Transmission (RadioTransmissionHandle): 4 bytes [0 bytes dynamic allocation]
+ * - PeerAcknowledgement (RadioPeerAcknowledgement): 1 bytes [0 bytes dynamic allocation]
+ * Total Memory: 16 bytes [0 bytes dynamic allocation]
+ * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
+ * End ESPressio Memory Audit
+ */
 struct FragmentRecord final {
         FragmentState State{FragmentState::Unregistered};
         IRadio* Radio{nullptr};
@@ -207,23 +207,23 @@ struct FragmentRecord final {
         RadioPeerAcknowledgement PeerAcknowledgement{RadioPeerAcknowledgement::Unavailable};
     };
 
-        /**
-     * ESPressio Memory Audit
-     * Members:
-     * - Used (bool): 1 bytes [0 bytes dynamic allocation]
-     * - Generation (std::uint16_t): 2 bytes [0 bytes dynamic allocation]
-     * - FragmentCount (std::uint8_t): 1 bytes [0 bytes dynamic allocation]
-     * - RegisteredCount (std::uint8_t): 1 bytes [0 bytes dynamic allocation]
-     * - TerminalCount (std::uint8_t): 1 bytes [0 bytes dynamic allocation]
-     * - AnyFailure (bool): 1 bytes [0 bytes dynamic allocation]
-     * - AnyAcknowledgementUnavailable (bool): 1 bytes [0 bytes dynamic allocation]
-     * - AllAcknowledged (bool): 1 bytes [0 bytes dynamic allocation]
-     * - Descriptor (DeferredLogicalTransferDescriptor): 24 bytes [0 bytes dynamic allocation]
-     * - Fragments (std::array<FragmentRecord, 255>): 4080 bytes [0 bytes dynamic allocation]
-     * Total Memory: 4116 bytes [0 bytes dynamic allocation]
-     * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
-     * End ESPressio Memory Audit
-     */
+/**
+ * ESPressio Memory Audit
+ * Members:
+ * - Used (bool): 1 bytes [0 bytes dynamic allocation]
+ * - Generation (std::uint16_t): 2 bytes [0 bytes dynamic allocation]
+ * - FragmentCount (std::uint8_t): 1 bytes [0 bytes dynamic allocation]
+ * - RegisteredCount (std::uint8_t): 1 bytes [0 bytes dynamic allocation]
+ * - TerminalCount (std::uint8_t): 1 bytes [0 bytes dynamic allocation]
+ * - AnyFailure (bool): 1 bytes [0 bytes dynamic allocation]
+ * - AnyAcknowledgementUnavailable (bool): 1 bytes [0 bytes dynamic allocation]
+ * - AllAcknowledged (bool): 1 bytes [0 bytes dynamic allocation]
+ * - Descriptor (DeferredLogicalTransferDescriptor): 24 bytes [0 bytes dynamic allocation]
+ * - Fragments (std::array<FragmentRecord, 255>): 4080 bytes [0 bytes dynamic allocation]
+ * Total Memory: 4116 bytes [0 bytes dynamic allocation]
+ * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
+ * End ESPressio Memory Audit
+ */
 struct Record final {
         bool Used{false};
         std::uint16_t Generation{0};

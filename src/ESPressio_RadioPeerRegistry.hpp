@@ -76,16 +76,16 @@ class RadioPeerRegistry final {
     static_assert(Capacity < std::numeric_limits<std::uint16_t>::max(),
                   "Radio peer slots must fit RadioPeerHandle.");
 
-        /**
-     * ESPressio Memory Audit
-     * Members:
-     * - Binding (RadioPeerBinding): 16 bytes [0 bytes dynamic allocation]
-     * - Generation (std::uint16_t): 2 bytes [0 bytes dynamic allocation]
-     * - Occupied (bool): 1 bytes [0 bytes dynamic allocation]
-     * Total Memory: 20 bytes [0 bytes dynamic allocation]
-     * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
-     * End ESPressio Memory Audit
-     */
+/**
+ * ESPressio Memory Audit
+ * Members:
+ * - Binding (RadioPeerBinding): 16 bytes [0 bytes dynamic allocation]
+ * - Generation (std::uint16_t): 2 bytes [0 bytes dynamic allocation]
+ * - Occupied (bool): 1 bytes [0 bytes dynamic allocation]
+ * Total Memory: 20 bytes [0 bytes dynamic allocation]
+ * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
+ * End ESPressio Memory Audit
+ */
 struct Slot final {
         RadioPeerBinding Binding{};
         std::uint16_t Generation{0};
