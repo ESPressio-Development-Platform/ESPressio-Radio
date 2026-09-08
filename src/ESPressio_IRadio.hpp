@@ -15,6 +15,13 @@ class IRadio;
 /// The packet payload is borrowed and is valid only for the duration of the callback. RadioWorker installs itself as
 /// the receiver so link callbacks/driver queues are serviced on the ESPressio worker thread before RadioTransport sees them.
 /// </remarks>
+/**
+ * ESPressio Memory Audit
+ * Members: none; polymorphic/virtual-base object metadata is included in the total.
+ * Total Memory: 4 bytes [0 bytes dynamic allocation]
+ * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
+ * End ESPressio Memory Audit
+ */
 class IRadioReceiver {
 public:
     virtual ~IRadioReceiver() = default;
@@ -28,6 +35,13 @@ public:
 /// directly; ISR-backed providers must defer the wake into an ISR-safe handoff/task context first. The signal itself
 /// must remain non-blocking and must never perform packet parsing, routing, authentication, or Foundation-Type work.
 /// </remarks>
+/**
+ * ESPressio Memory Audit
+ * Members: none; polymorphic/virtual-base object metadata is included in the total.
+ * Total Memory: 4 bytes [0 bytes dynamic allocation]
+ * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
+ * End ESPressio Memory Audit
+ */
 class IRadioWorkSignal {
 public:
     virtual ~IRadioWorkSignal() = default;
@@ -40,6 +54,15 @@ public:
 /// a worker schedule a continuation without requiring a provider to spin until empty. PacketsProcessed is diagnostic
 /// evidence only and need not equal the number of native frames inspected by a provider.
 /// </remarks>
+/**
+ * ESPressio Memory Audit
+ * Members:
+ * - PacketsProcessed (std::uint32_t): 4 bytes [0 bytes dynamic allocation]
+ * - WorkRemaining (bool): 1 bytes [0 bytes dynamic allocation]
+ * Total Memory: 8 bytes [0 bytes dynamic allocation]
+ * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
+ * End ESPressio Memory Audit
+ */
 struct RadioIngressServiceResult final {
     std::uint32_t PacketsProcessed{0U};
     bool WorkRemaining{false};
@@ -51,6 +74,13 @@ struct RadioIngressServiceResult final {
 /// authentication, serialization, or message semantics. Inbound processing is owned by RadioWorker: providers queue
 /// callback-driven traffic where necessary and expose that queued/hardware traffic only through the worker service API.
 /// </remarks>
+/**
+ * ESPressio Memory Audit
+ * Members: none; polymorphic/virtual-base object metadata is included in the total.
+ * Total Memory: 4 bytes [0 bytes dynamic allocation]
+ * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
+ * End ESPressio Memory Audit
+ */
 class IRadio {
 public:
     virtual ~IRadio() = default;

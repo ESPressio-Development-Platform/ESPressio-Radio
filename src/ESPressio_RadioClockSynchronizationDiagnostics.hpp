@@ -9,6 +9,21 @@
 namespace ESPressio::Radio {
 
 /// <summary>Reason-specific diagnostic counters for Timing-rejected Radio clock exchanges.</summary>
+/**
+ * ESPressio Memory Audit
+ * Members:
+ * - InvalidTimestampOrder (std::uint64_t): 8 bytes [0 bytes dynamic allocation]
+ * - RemoteProcessingExceedsLocalElapsed (std::uint64_t): 8 bytes [0 bytes dynamic allocation]
+ * - RoundTripDelayExceeded (std::uint64_t): 8 bytes [0 bytes dynamic allocation]
+ * - Unclassified (std::uint64_t): 8 bytes [0 bytes dynamic allocation]
+ * - RoundTripDelaySamples (std::uint64_t): 8 bytes [0 bytes dynamic allocation]
+ * - TotalRejectedRoundTripDelayNanoseconds (std::uint64_t): 8 bytes [0 bytes dynamic allocation]
+ * - MinimumRejectedRoundTripDelayNanoseconds (std::uint64_t): 8 bytes [0 bytes dynamic allocation]
+ * - MaximumRejectedRoundTripDelayNanoseconds (std::uint64_t): 8 bytes [0 bytes dynamic allocation]
+ * Total Memory: 64 bytes [0 bytes dynamic allocation]
+ * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
+ * End ESPressio Memory Audit
+ */
 struct RadioClockSynchronizationRejectionStatistics final {
     std::uint64_t InvalidTimestampOrder{0U};
     std::uint64_t RemoteProcessingExceedsLocalElapsed{0U};
@@ -40,6 +55,23 @@ struct RadioClockSynchronizationRejectionStatistics final {
 /// rejects it does this decorator apply Timing::ValidateClockSynchronizationSample using the target's active config and
 /// retain bounded atomic counters. No acceptance criterion is changed and no additional synchronization is introduced.
 /// </remarks>
+/**
+ * ESPressio Memory Audit
+ * Inherited Memory Total: 4 bytes [0 bytes dynamic allocation]
+ * Members:
+ * - _target (Timing::IClockSynchronizationTarget<Timing::ClockTick>&): 4 bytes [0 bytes dynamic allocation]
+ * - _invalidTimestampOrder (std::atomic<std::uint64_t>): 8 bytes [0 bytes dynamic allocation]
+ * - _remoteProcessingExceedsLocalElapsed (std::atomic<std::uint64_t>): 8 bytes [0 bytes dynamic allocation]
+ * - _roundTripDelayExceeded (std::atomic<std::uint64_t>): 8 bytes [0 bytes dynamic allocation]
+ * - _unclassified (std::atomic<std::uint64_t>): 8 bytes [0 bytes dynamic allocation]
+ * - _roundTripDelaySamples (std::atomic<std::uint64_t>): 8 bytes [0 bytes dynamic allocation]
+ * - _totalRejectedRoundTripDelayNanoseconds (std::atomic<std::uint64_t>): 8 bytes [0 bytes dynamic allocation]
+ * - _minimumRejectedRoundTripDelayNanoseconds (std::atomic<std::uint64_t>): 8 bytes [0 bytes dynamic allocation]
+ * - _maximumRejectedRoundTripDelayNanoseconds (std::atomic<std::uint64_t>): 8 bytes [0 bytes dynamic allocation]
+ * Total Memory: 72 bytes [0 bytes dynamic allocation]
+ * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
+ * End ESPressio Memory Audit
+ */
 class RadioClockSynchronizationDiagnosticTarget final
     : public Timing::IClockSynchronizationTarget<Timing::ClockTick> {
 private:

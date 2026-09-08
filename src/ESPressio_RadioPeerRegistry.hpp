@@ -15,6 +15,15 @@
 namespace ESPressio::Radio {
 
 /// <summary>Resolved Radio-owned direct-peer binding.</summary>
+/**
+ * ESPressio Memory Audit
+ * Members:
+ * - Interface (IRadio*): 4 bytes [0 bytes dynamic allocation]
+ * - Address (RadioAddress): 9 bytes [0 bytes dynamic allocation]
+ * Total Memory: 16 bytes [0 bytes dynamic allocation]
+ * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
+ * End ESPressio Memory Audit
+ */
 struct RadioPeerBinding final {
     IRadio* Interface{nullptr};
     RadioAddress Address{};
@@ -25,6 +34,13 @@ struct RadioPeerBinding final {
 };
 
 /// <summary>Result of observing or explicitly registering one direct Radio peer.</summary>
+/**
+ * ESPressio Memory Audit
+ * Underlying storage: 1 bytes
+ * Total Memory: 1 bytes [0 bytes dynamic allocation]
+ * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
+ * End ESPressio Memory Audit
+ */
 enum class RadioPeerObserveResult : std::uint8_t {
     Observed,
     Refreshed,
@@ -44,13 +60,33 @@ enum class RadioPeerObserveResult : std::uint8_t {
 /// Each Radio technology/integration may choose a smaller finite bound appropriate to its own neighbour resources.
 /// Mutation is expected from the serialized Radio/Mesh integration domain; this registry owns no task or mutex.
 /// </remarks>
+/**
+ * ESPressio Memory Audit
+ * Members:
+ * - _slots (std::array<Slot, Capacity>): Capacity * (20 bytes) [0 bytes dynamic allocation]
+ * - _size (std::size_t): 4 bytes [0 bytes dynamic allocation]
+ * Total Memory: 4 bytes known/aligned storage + Capacity * (20 bytes) [0 bytes dynamic allocation]
+ * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
+ * Confidence: low; compile-time sizeof on the concrete target remains authoritative for ABI-sensitive/opaque members.
+ * End ESPressio Memory Audit
+ */
 template<std::size_t Capacity = ESPRESSIO_RADIO_MAX_PEERS>
 class RadioPeerRegistry final {
     static_assert(Capacity > 0, "Radio peer capacity must be non-zero.");
     static_assert(Capacity < std::numeric_limits<std::uint16_t>::max(),
                   "Radio peer slots must fit RadioPeerHandle.");
 
-    struct Slot final {
+        /**
+     * ESPressio Memory Audit
+     * Members:
+     * - Binding (RadioPeerBinding): 16 bytes [0 bytes dynamic allocation]
+     * - Generation (std::uint16_t): 2 bytes [0 bytes dynamic allocation]
+     * - Occupied (bool): 1 bytes [0 bytes dynamic allocation]
+     * Total Memory: 20 bytes [0 bytes dynamic allocation]
+     * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
+     * End ESPressio Memory Audit
+     */
+struct Slot final {
         RadioPeerBinding Binding{};
         std::uint16_t Generation{0};
         bool Occupied{false};

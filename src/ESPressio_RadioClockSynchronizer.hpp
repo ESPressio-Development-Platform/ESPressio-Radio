@@ -15,6 +15,13 @@
 
 namespace ESPressio::Radio {
 
+/**
+ * ESPressio Memory Audit
+ * Underlying storage: 1 bytes
+ * Total Memory: 1 bytes [0 bytes dynamic allocation]
+ * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
+ * End ESPressio Memory Audit
+ */
 enum class RadioClockSynchronizationMode : uint8_t {
     Disabled = 0,
     Client = 1,
@@ -22,6 +29,18 @@ enum class RadioClockSynchronizationMode : uint8_t {
     ClientAndReference = 3
 };
 
+/**
+ * ESPressio Memory Audit
+ * Members:
+ * - Mode (RadioClockSynchronizationMode): 1 bytes [0 bytes dynamic allocation]
+ * - ReferencePeer (RadioAddress): 9 bytes [0 bytes dynamic allocation]
+ * - SynchronizationIntervalMilliseconds (uint32_t): 4 bytes [0 bytes dynamic allocation]
+ * - AdjustmentMode (Timing::ClockSynchronizationAdjustmentMode): 1 bytes [0 bytes dynamic allocation]
+ * - RequireReceiveTimestamp (bool): 1 bytes [0 bytes dynamic allocation]
+ * Total Memory: 20 bytes [0 bytes dynamic allocation]
+ * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
+ * End ESPressio Memory Audit
+ */
 struct RadioClockSynchronizationConfig {
     RadioClockSynchronizationMode Mode = RadioClockSynchronizationMode::Disabled;
     RadioAddress ReferencePeer{};
@@ -31,6 +50,23 @@ struct RadioClockSynchronizationConfig {
     bool RequireReceiveTimestamp = false;
 };
 
+/**
+ * ESPressio Memory Audit
+ * Members:
+ * - RequestsAttempted (uint64_t): 8 bytes [0 bytes dynamic allocation]
+ * - RequestsSent (uint64_t): 8 bytes [0 bytes dynamic allocation]
+ * - RequestsReceived (uint64_t): 8 bytes [0 bytes dynamic allocation]
+ * - ResponsesSent (uint64_t): 8 bytes [0 bytes dynamic allocation]
+ * - ResponsesReceived (uint64_t): 8 bytes [0 bytes dynamic allocation]
+ * - SendFailures (uint64_t): 8 bytes [0 bytes dynamic allocation]
+ * - IgnoredFrames (uint64_t): 8 bytes [0 bytes dynamic allocation]
+ * - SamplesAccepted (uint64_t): 8 bytes [0 bytes dynamic allocation]
+ * - SamplesRejected (uint64_t): 8 bytes [0 bytes dynamic allocation]
+ * - TimestampFallbacks (uint64_t): 8 bytes [0 bytes dynamic allocation]
+ * Total Memory: 80 bytes [0 bytes dynamic allocation]
+ * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
+ * End ESPressio Memory Audit
+ */
 struct RadioClockSynchronizationStatistics {
     uint64_t RequestsAttempted = 0;
     uint64_t RequestsSent = 0;
@@ -71,9 +107,43 @@ struct RadioClockSynchronizationStatistics {
 /// it may leave it zero; unless RequireReceiveTimestamp is true, synchronization falls back to control-worker service time
 /// with reduced precision.
 /// </remarks>
+/**
+ * ESPressio Memory Audit
+ * Inherited Memory Total: 4 bytes [0 bytes dynamic allocation]
+ * Members:
+ * - _radio (IRadio*): 4 bytes [0 bytes dynamic allocation]
+ * - _target (Timing::IClockSynchronizationTarget<Timing::ClockTick>*): 4 bytes [0 bytes dynamic allocation]
+ * - _config (RadioClockSynchronizationConfig): 20 bytes [0 bytes dynamic allocation]
+ * - _nextSequence (std::atomic<uint32_t>): 4 bytes [0 bytes dynamic allocation]
+ * - _pendingSequence (std::atomic<uint32_t>): 4 bytes [0 bytes dynamic allocation]
+ * - _lastRequestMonotonicNanoseconds (std::atomic<uint64_t>): 8 bytes [0 bytes dynamic allocation]
+ * - _initialized (std::atomic<bool>): 1 bytes [0 bytes dynamic allocation]
+ * - _requestsAttempted (std::atomic<uint64_t>): 8 bytes [0 bytes dynamic allocation]
+ * - _requestsSent (std::atomic<uint64_t>): 8 bytes [0 bytes dynamic allocation]
+ * - _requestsReceived (std::atomic<uint64_t>): 8 bytes [0 bytes dynamic allocation]
+ * - _responsesSent (std::atomic<uint64_t>): 8 bytes [0 bytes dynamic allocation]
+ * - _responsesReceived (std::atomic<uint64_t>): 8 bytes [0 bytes dynamic allocation]
+ * - _sendFailures (std::atomic<uint64_t>): 8 bytes [0 bytes dynamic allocation]
+ * - _ignoredFrames (std::atomic<uint64_t>): 8 bytes [0 bytes dynamic allocation]
+ * - _samplesAccepted (std::atomic<uint64_t>): 8 bytes [0 bytes dynamic allocation]
+ * - _samplesRejected (std::atomic<uint64_t>): 8 bytes [0 bytes dynamic allocation]
+ * - _timestampFallbacks (std::atomic<uint64_t>): 8 bytes [0 bytes dynamic allocation]
+ * - _stateMutex (System::Synchronization::Mutex): 20 bytes [_owned: owned object: 4 bytes; _fallback: _mutex: native synchronization state may allocate platform resources lazily]
+ * Total Memory: 152 bytes [_stateMutex: _owned: owned object: 4 bytes; _stateMutex: _fallback: _mutex: native synchronization state may allocate platform resources lazily]
+ * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
+ * Confidence: medium; compile-time sizeof on the concrete target remains authoritative for ABI-sensitive/opaque members.
+ * End ESPressio Memory Audit
+ */
 class RadioClockSynchronizer final : public IRadioControlProtocol {
 private:
-    enum class MessageType : uint8_t { Request = 1, Response = 2 };
+        /**
+     * ESPressio Memory Audit
+     * Underlying storage: 1 bytes
+     * Total Memory: 1 bytes [0 bytes dynamic allocation]
+     * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
+     * End ESPressio Memory Audit
+     */
+enum class MessageType : uint8_t { Request = 1, Response = 2 };
 
     static constexpr uint16_t WireMagic = 0x5953u;
     static constexpr uint8_t WireVersion = 1u;

@@ -6,6 +6,13 @@
 namespace ESPressio::Radio {
 
 /// <summary>Consumes one terminal aggregate after all observable fragments of a logical transfer become terminal.</summary>
+/**
+ * ESPressio Memory Audit
+ * Members: none; polymorphic/virtual-base object metadata is included in the total.
+ * Total Memory: 4 bytes [0 bytes dynamic allocation]
+ * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
+ * End ESPressio Memory Audit
+ */
 class ILogicalTransferTerminalObserver {
 public:
     virtual ~ILogicalTransferTerminalObserver() = default;
@@ -21,6 +28,16 @@ public:
 /// only when the tracker establishes one terminal aggregate for the logical transfer. Unknown/stale handles are ignored.
 /// The owning Radio execution domain must serialize tracker registration and observer resolution.
 /// </remarks>
+/**
+ * ESPressio Memory Audit
+ * Inherited Memory Total: 4 bytes [0 bytes dynamic allocation]
+ * Members:
+ * - _tracker (IDeferredLogicalTransferTracker&): 4 bytes [0 bytes dynamic allocation]
+ * - _observer (ILogicalTransferTerminalObserver&): 4 bytes [0 bytes dynamic allocation]
+ * Total Memory: 12 bytes [0 bytes dynamic allocation]
+ * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
+ * End ESPressio Memory Audit
+ */
 class DeferredLogicalTransferObserverBridge final : public IRadioTransmissionObserver {
     IDeferredLogicalTransferTracker& _tracker;
     ILogicalTransferTerminalObserver& _observer;

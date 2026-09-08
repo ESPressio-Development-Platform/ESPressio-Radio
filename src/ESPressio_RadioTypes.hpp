@@ -14,6 +14,15 @@ using RadioTransferId = uint16_t;
 static constexpr std::size_t MaximumRadioAddressBytes = 8;
 
 /// <summary>Opaque link-layer address understood only by a concrete radio provider.</summary>
+/**
+ * ESPressio Memory Audit
+ * Members:
+ * - Bytes (std::array<uint8_t, MaximumRadioAddressBytes>): 8 bytes [0 bytes dynamic allocation]
+ * - Length (uint8_t): 1 bytes [0 bytes dynamic allocation]
+ * Total Memory: 9 bytes [0 bytes dynamic allocation]
+ * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
+ * End ESPressio Memory Audit
+ */
 struct RadioAddress {
     std::array<uint8_t, MaximumRadioAddressBytes> Bytes{};
     uint8_t Length = 0;
@@ -52,6 +61,15 @@ struct RadioAddress {
 };
 
 /// <summary>Generation-safe process-local handle to one Radio-owned directly reachable peer binding.</summary>
+/**
+ * ESPressio Memory Audit
+ * Members:
+ * - Slot (std::uint16_t): 2 bytes [0 bytes dynamic allocation]
+ * - Generation (std::uint16_t): 2 bytes [0 bytes dynamic allocation]
+ * Total Memory: 4 bytes [0 bytes dynamic allocation]
+ * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
+ * End ESPressio Memory Audit
+ */
 struct RadioPeerHandle final {
     std::uint16_t Slot{std::numeric_limits<std::uint16_t>::max()};
     std::uint16_t Generation{0};
@@ -74,6 +92,14 @@ static_assert(sizeof(RadioPeerHandle) == 4, "RadioPeerHandle must remain a compa
 /// that provider publishes the corresponding terminal transmission observation. It carries no Mesh identity or routing
 /// semantics.
 /// </remarks>
+/**
+ * ESPressio Memory Audit
+ * Members:
+ * - Value (std::uint32_t): 4 bytes [0 bytes dynamic allocation]
+ * Total Memory: 4 bytes [0 bytes dynamic allocation]
+ * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
+ * End ESPressio Memory Audit
+ */
 struct RadioTransmissionHandle final {
     std::uint32_t Value{0};
     constexpr bool IsValid() const noexcept { return Value != 0U; }
@@ -83,6 +109,13 @@ struct RadioTransmissionHandle final {
 };
 static_assert(sizeof(RadioTransmissionHandle) == 4, "RadioTransmissionHandle must remain a compact provider-local value.");
 
+/**
+ * ESPressio Memory Audit
+ * Underlying storage: 4 bytes
+ * Total Memory: 4 bytes [0 bytes dynamic allocation]
+ * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
+ * End ESPressio Memory Audit
+ */
 enum class RadioCapability : uint32_t {
     None = 0,
     Broadcast = 1u << 0,
@@ -106,6 +139,17 @@ constexpr RadioCapability operator&(RadioCapability a, RadioCapability b) noexce
 }
 
 /// <summary>Describes bounded facilities supplied by one concrete radio provider.</summary>
+/**
+ * ESPressio Memory Audit
+ * Members:
+ * - Flags (RadioCapability): 4 bytes [0 bytes dynamic allocation]
+ * - MaximumPayloadBytes (uint16_t): 2 bytes [0 bytes dynamic allocation]
+ * - AddressBytes (uint8_t): 1 bytes [0 bytes dynamic allocation]
+ * - MaximumLogicalTransferBytes (uint16_t): 2 bytes [0 bytes dynamic allocation]
+ * Total Memory: 12 bytes [0 bytes dynamic allocation]
+ * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
+ * End ESPressio Memory Audit
+ */
 struct RadioCapabilities {
     RadioCapability Flags = RadioCapability::None;
     uint16_t MaximumPayloadBytes = 0;
@@ -116,6 +160,13 @@ struct RadioCapabilities {
     }
 };
 
+/**
+ * ESPressio Memory Audit
+ * Underlying storage: 1 bytes
+ * Total Memory: 1 bytes [0 bytes dynamic allocation]
+ * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
+ * End ESPressio Memory Audit
+ */
 enum class RadioPacketFlag : uint8_t {
     None = 0,
     Broadcast = 1u << 0,
@@ -129,6 +180,20 @@ constexpr bool HasFlag(RadioPacketFlag flags, RadioPacketFlag flag) noexcept {
 }
 
 /// <summary>Borrowed physical/link packet view delivered synchronously by a concrete radio provider.</summary>
+/**
+ * ESPressio Memory Audit
+ * Members:
+ * - Source (RadioAddress): 9 bytes [0 bytes dynamic allocation]
+ * - Destination (RadioAddress): 9 bytes [0 bytes dynamic allocation]
+ * - Payload (uint8_t*): 4 bytes [0 bytes dynamic allocation]
+ * - PayloadSize (std::size_t): 4 bytes [0 bytes dynamic allocation]
+ * - RssiDbm (int16_t): 2 bytes [0 bytes dynamic allocation]
+ * - ReceiveTimestampNanoseconds (uint64_t): 8 bytes [0 bytes dynamic allocation]
+ * - Flags (RadioPacketFlag): 1 bytes [0 bytes dynamic allocation]
+ * Total Memory: 44 bytes [0 bytes dynamic allocation]
+ * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
+ * End ESPressio Memory Audit
+ */
 struct RadioPacketView {
     RadioAddress Source{};
     RadioAddress Destination{};
@@ -140,6 +205,13 @@ struct RadioPacketView {
 };
 
 /// <summary>Terminal knowledge a provider has established for an accepted packet transmission.</summary>
+/**
+ * ESPressio Memory Audit
+ * Underlying storage: 1 bytes
+ * Total Memory: 1 bytes [0 bytes dynamic allocation]
+ * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
+ * End ESPressio Memory Audit
+ */
 enum class RadioTransmissionCompletion : uint8_t {
     Unknown,
     Completed,
@@ -147,6 +219,13 @@ enum class RadioTransmissionCompletion : uint8_t {
 };
 
 /// <summary>Qualified peer-acknowledgement evidence for one completed direct-link transmission.</summary>
+/**
+ * ESPressio Memory Audit
+ * Underlying storage: 1 bytes
+ * Total Memory: 1 bytes [0 bytes dynamic allocation]
+ * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
+ * End ESPressio Memory Audit
+ */
 enum class RadioPeerAcknowledgement : uint8_t {
     Unavailable,
     Unknown,
@@ -163,6 +242,15 @@ enum class RadioPeerAcknowledgement : uint8_t {
 /// when the technology obtained a peer/link acknowledgement. Absence of acknowledgement support is Unavailable, never
 /// silently treated as failure or success.
 /// </remarks>
+/**
+ * ESPressio Memory Audit
+ * Members:
+ * - Transmission (RadioTransmissionCompletion): 1 bytes [0 bytes dynamic allocation]
+ * - PeerAcknowledgement (RadioPeerAcknowledgement): 1 bytes [0 bytes dynamic allocation]
+ * Total Memory: 2 bytes [0 bytes dynamic allocation]
+ * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
+ * End ESPressio Memory Audit
+ */
 struct RadioDirectLinkEvidence final {
     RadioTransmissionCompletion Transmission{RadioTransmissionCompletion::Unknown};
     RadioPeerAcknowledgement PeerAcknowledgement{RadioPeerAcknowledgement::Unavailable};
@@ -191,6 +279,13 @@ struct RadioDirectLinkEvidence final {
     }
 };
 
+/**
+ * ESPressio Memory Audit
+ * Underlying storage: 1 bytes
+ * Total Memory: 1 bytes [0 bytes dynamic allocation]
+ * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
+ * End ESPressio Memory Audit
+ */
 enum class RadioSendStatus : uint8_t {
     Accepted,
     NotStarted,
@@ -208,6 +303,17 @@ enum class RadioSendStatus : uint8_t {
 /// DeferredTransmission handle; if it does, the provider must later publish exactly one terminal observation for that
 /// handle. An invalid handle means no stronger deferred evidence has been promised.
 /// </remarks>
+/**
+ * ESPressio Memory Audit
+ * Members:
+ * - Status (RadioSendStatus): 1 bytes [0 bytes dynamic allocation]
+ * - NativeError (int32_t): 4 bytes [0 bytes dynamic allocation]
+ * - Evidence (RadioDirectLinkEvidence): 2 bytes [0 bytes dynamic allocation]
+ * - DeferredTransmission (RadioTransmissionHandle): 4 bytes [0 bytes dynamic allocation]
+ * Total Memory: 16 bytes [0 bytes dynamic allocation]
+ * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
+ * End ESPressio Memory Audit
+ */
 struct RadioSendResult {
     RadioSendStatus Status = RadioSendStatus::NativeFailure;
     int32_t NativeError = 0;
