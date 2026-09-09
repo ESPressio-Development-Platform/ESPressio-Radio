@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Checkout ESPressio System propagation branch
-        run: git clone --depth 1 --branch structural_realignment_propagation_ESPressio-Mesh https://github.com/ESPressio-Development-Platform/ESPressio-System.git deps/System
+        run: git clone --depth 1 --branch primitives_redesign https://github.com/ESPressio-Development-Platform/ESPressio-System.git deps/System
       - name: Checkout ESPressio Observable structural_realignment
         run: git clone --depth 1 --branch primitives_redesign https://github.com/ESPressio-Development-Platform/ESPressio-Observable.git deps/Observable
       - name: Checkout ESPressio Timing propagation branch
@@ -82,8 +82,8 @@ jobs:
           build_unflags = -std=gnu++11
           lib_ldf_mode = deep+
           lib_deps =
-              https://github.com/ESPressio-Development-Platform/ESPressio-System.git#structural_realignment_propagation_ESPressio-Mesh
-              https://github.com/ESPressio-Development-Platform/ESPressio-Task.git#structural_realignment
+              https://github.com/ESPressio-Development-Platform/ESPressio-System.git#primitives_redesign
+              https://github.com/ESPressio-Development-Platform/ESPressio-Task.git#primitives_redesign
               https://github.com/ESPressio-Development-Platform/ESPressio-Units.git#primitives_redesign
               https://github.com/ESPressio-Development-Platform/ESPressio-Observable.git#primitives_redesign
               https://github.com/ESPressio-Development-Platform/ESPressio-Timing.git#primitives_redesign
