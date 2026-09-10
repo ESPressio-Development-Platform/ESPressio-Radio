@@ -7,21 +7,7 @@
 using namespace ESPressio;
 using namespace ESPressio::Radio;
 
-/**
- * ESPressio Memory Audit
- * Inherited Memory Total: 4 bytes [0 bytes dynamic allocation]
- * Members:
- * - AcceptSamples (bool): 1 bytes [0 bytes dynamic allocation]
- * - SubmittedSamples (uint32_t): 4 bytes [0 bytes dynamic allocation]
- * - LastSample (Timing::ClockSynchronizationSample<Timing::ClockTick>): 32 bytes [0 bytes dynamic allocation]
- * - LastAdjustmentMode (Timing::ClockSynchronizationAdjustmentMode): 1 bytes [0 bytes dynamic allocation]
- * - _offsetNanoseconds (int64_t): 8 bytes [0 bytes dynamic allocation]
- * - _configuration (Timing::ClockSynchronizationConfig): 8 bytes [0 bytes dynamic allocation]
- * - _status (Timing::ClockSynchronizationStatus<Timing::ClockTick>): 72 bytes [0 bytes dynamic allocation]
- * Total Memory: 136 bytes [0 bytes dynamic allocation]
- * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
- * End ESPressio Memory Audit
- */
+
 class FakeSynchronizationTarget final :
     public Timing::IClockSynchronizationTarget<Timing::ClockTick> {
 public:
@@ -86,28 +72,7 @@ private:
 /// Host fake that routes recognized control bytes directly to IRadioControlProtocol and records any packet which would
 /// otherwise have fallen through to the standard Radio receiver/observer lifecycle.
 /// </summary>
-/**
- * ESPressio Memory Audit
- * Inherited Memory Total: 4 bytes [0 bytes dynamic allocation]
- * Members:
- * - ControlDeliveries (std::uint32_t): 4 bytes [0 bytes dynamic allocation]
- * - StandardDeliveries (std::uint32_t): 4 bytes [0 bytes dynamic allocation]
- * - _local (RadioAddress): 9 bytes [0 bytes dynamic allocation]
- * - _timestamped (bool): 1 bytes [0 bytes dynamic allocation]
- * - _mtu (uint16_t): 2 bytes [0 bytes dynamic allocation]
- * - _exposeReceiveSource (bool): 1 bytes [0 bytes dynamic allocation]
- * - _deliveryEnabled (bool): 1 bytes [0 bytes dynamic allocation]
- * - _started (bool): 1 bytes [0 bytes dynamic allocation]
- * - _receiver (IRadioReceiver*): 4 bytes [0 bytes dynamic allocation]
- * - _workSignal (IRadioWorkSignal*): 4 bytes [0 bytes dynamic allocation]
- * - _controlProtocol (IRadioControlProtocol*): 4 bytes [0 bytes dynamic allocation]
- * - _observers (RadioObserverSubscriptions): 8 bytes [_dispatcher: shared control block (~12+ bytes; allocate_shared may co-locate object) + object 52 bytes; _dispatcher: pointee: Observable: IUntypedObservable: IObservable: enable_shared_from_this: embedded weak_ptr shares a control block when activated; _dispatcher: pointee: Observable: IUntypedObservable: IObservable: _lifetimeControl: shared control block (~12+ bytes; allocate_shared may co-locate object) + object 20 bytes; _dispatcher: pointee: Observable: IUntypedObservable: IObservable: _lifetimeControl: pointee: _mutex: native synchronization state may allocate platform resources lazily; _dispatcher: pointee: Observable: IUntypedObservable: IObservable: _lifetimeControl: pointee: _condition: native condition-variable state may allocate platform synchronization resources; _dispatcher: pointee: Observable: _registrations: Capacity * (12 bytes) element storage; _dispatcher: pointee: Observable: _bindings: Capacity * (12 bytes) element storage]
- * - _peer (FakeClockRadio*): 4 bytes [0 bytes dynamic allocation]
- * Total Memory: 52 bytes [_observers: _dispatcher: shared control block (~12+ bytes; allocate_shared may co-locate object) + object 52 bytes; _observers: _dispatcher: pointee: Observable: IUntypedObservable: IObservable: enable_shared_from_this: embedded weak_ptr shares a control block when activated; _observers: _dispatcher: pointee: Observable: IUntypedObservable: IObservable: _lifetimeControl: shared control block (~12+ bytes; allocate_shared may co-locate object) + object 20 bytes; _observers: _dispatcher: pointee: Observable: IUntypedObservable: IObservable: _lifetimeControl: pointee: _mutex: native synchronization state may allocate platform resources lazily; _observers: _dispatcher: pointee: Observable: IUntypedObservable: IObservable: _lifetimeControl: pointee: _condition: native condition-variable state may allocate platform synchronization resources; _observers: _dispatcher: pointee: Observable: _registrations: Capacity * (12 bytes) element storage; _observers: _dispatcher: pointee: Observable: _bindings: Capacity * (12 bytes) element storage]
- * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
- * Confidence: medium; compile-time sizeof on the concrete target remains authoritative for ABI-sensitive/opaque members.
- * End ESPressio Memory Audit
- */
+
 class FakeClockRadio final : public IRadio {
 public:
     FakeClockRadio(

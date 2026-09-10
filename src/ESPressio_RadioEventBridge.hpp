@@ -18,16 +18,7 @@ namespace ESPressio::Event {
 /// instantiated. Borrowed packet/transfer payloads are copied exactly once into externally preferred event-owned storage
 /// because Event delivery outlives the synchronous observer callback.
 /// </remarks>
-/**
- * ESPressio Memory Audit
- * Inherited Memory Total: 24 bytes [0 bytes dynamic allocation]
- * Members:
- * - _handles (HandleStorage): 12 bytes [Capacity * (12 bytes) element storage; N live elements each: owned object: 4 bytes]
- * Total Memory: 36 bytes [_handles: Capacity * (12 bytes) element storage; _handles: N live elements each: owned object: 4 bytes]
- * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
- * Confidence: medium; compile-time sizeof on the concrete target remains authoritative for ABI-sensitive/opaque members.
- * End ESPressio Memory Audit
- */
+
 class RadioEventBridge final :
     public Radio::IRadioLifecycleObserver,
     public Radio::IRadioPacketObserver,

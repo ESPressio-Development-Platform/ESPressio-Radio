@@ -15,23 +15,7 @@ static_assert(
     "Radio reassembly payload storage must be exactly build-accountable."
 );
 
-/**
- * ESPressio Memory Audit
- * Inherited Memory Total: 4 bytes [0 bytes dynamic allocation]
- * Members:
- * - _local (RadioAddress): 9 bytes [0 bytes dynamic allocation]
- * - _mtu (uint16_t): 2 bytes [0 bytes dynamic allocation]
- * - _logicalMaximum (uint16_t): 2 bytes [0 bytes dynamic allocation]
- * - _started (bool): 1 bytes [0 bytes dynamic allocation]
- * - _receiver (IRadioReceiver*): 4 bytes [0 bytes dynamic allocation]
- * - _workSignal (IRadioWorkSignal*): 4 bytes [0 bytes dynamic allocation]
- * - _observers (RadioObserverSubscriptions): 8 bytes [_dispatcher: shared control block (~12+ bytes; allocate_shared may co-locate object) + object 52 bytes; _dispatcher: pointee: Observable: IUntypedObservable: IObservable: enable_shared_from_this: embedded weak_ptr shares a control block when activated; _dispatcher: pointee: Observable: IUntypedObservable: IObservable: _lifetimeControl: shared control block (~12+ bytes; allocate_shared may co-locate object) + object 20 bytes; _dispatcher: pointee: Observable: IUntypedObservable: IObservable: _lifetimeControl: pointee: _mutex: native synchronization state may allocate platform resources lazily; _dispatcher: pointee: Observable: IUntypedObservable: IObservable: _lifetimeControl: pointee: _condition: native condition-variable state may allocate platform synchronization resources; _dispatcher: pointee: Observable: _registrations: Capacity * (12 bytes) element storage; _dispatcher: pointee: Observable: _bindings: Capacity * (12 bytes) element storage]
- * - _peer (FakeRadio*): 4 bytes [0 bytes dynamic allocation]
- * Total Memory: 40 bytes [_observers: _dispatcher: shared control block (~12+ bytes; allocate_shared may co-locate object) + object 52 bytes; _observers: _dispatcher: pointee: Observable: IUntypedObservable: IObservable: enable_shared_from_this: embedded weak_ptr shares a control block when activated; _observers: _dispatcher: pointee: Observable: IUntypedObservable: IObservable: _lifetimeControl: shared control block (~12+ bytes; allocate_shared may co-locate object) + object 20 bytes; _observers: _dispatcher: pointee: Observable: IUntypedObservable: IObservable: _lifetimeControl: pointee: _mutex: native synchronization state may allocate platform resources lazily; _observers: _dispatcher: pointee: Observable: IUntypedObservable: IObservable: _lifetimeControl: pointee: _condition: native condition-variable state may allocate platform synchronization resources; _observers: _dispatcher: pointee: Observable: _registrations: Capacity * (12 bytes) element storage; _observers: _dispatcher: pointee: Observable: _bindings: Capacity * (12 bytes) element storage]
- * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
- * Confidence: medium; compile-time sizeof on the concrete target remains authoritative for ABI-sensitive/opaque members.
- * End ESPressio Memory Audit
- */
+
 class FakeRadio final : public IRadio {
 public:
     explicit FakeRadio(uint8_t addressByte, uint16_t mtu, uint16_t logicalMaximum = 4096)
@@ -100,19 +84,7 @@ private:
     FakeRadio* _peer = nullptr;
 };
 
-/**
- * ESPressio Memory Audit
- * Inherited Memory Total: 4 bytes [0 bytes dynamic allocation]
- * Members:
- * - _resolvesAddress (bool): 1 bytes [0 bytes dynamic allocation]
- * - _started (bool): 1 bytes [0 bytes dynamic allocation]
- * - _local (RadioAddress): 9 bytes [0 bytes dynamic allocation]
- * - _observers (RadioObserverSubscriptions): 8 bytes [_dispatcher: shared control block (~12+ bytes; allocate_shared may co-locate object) + object 52 bytes; _dispatcher: pointee: Observable: IUntypedObservable: IObservable: enable_shared_from_this: embedded weak_ptr shares a control block when activated; _dispatcher: pointee: Observable: IUntypedObservable: IObservable: _lifetimeControl: shared control block (~12+ bytes; allocate_shared may co-locate object) + object 20 bytes; _dispatcher: pointee: Observable: IUntypedObservable: IObservable: _lifetimeControl: pointee: _mutex: native synchronization state may allocate platform resources lazily; _dispatcher: pointee: Observable: IUntypedObservable: IObservable: _lifetimeControl: pointee: _condition: native condition-variable state may allocate platform synchronization resources; _dispatcher: pointee: Observable: _registrations: Capacity * (12 bytes) element storage; _dispatcher: pointee: Observable: _bindings: Capacity * (12 bytes) element storage]
- * Total Memory: 24 bytes [_observers: _dispatcher: shared control block (~12+ bytes; allocate_shared may co-locate object) + object 52 bytes; _observers: _dispatcher: pointee: Observable: IUntypedObservable: IObservable: enable_shared_from_this: embedded weak_ptr shares a control block when activated; _observers: _dispatcher: pointee: Observable: IUntypedObservable: IObservable: _lifetimeControl: shared control block (~12+ bytes; allocate_shared may co-locate object) + object 20 bytes; _observers: _dispatcher: pointee: Observable: IUntypedObservable: IObservable: _lifetimeControl: pointee: _mutex: native synchronization state may allocate platform resources lazily; _observers: _dispatcher: pointee: Observable: IUntypedObservable: IObservable: _lifetimeControl: pointee: _condition: native condition-variable state may allocate platform synchronization resources; _observers: _dispatcher: pointee: Observable: _registrations: Capacity * (12 bytes) element storage; _observers: _dispatcher: pointee: Observable: _bindings: Capacity * (12 bytes) element storage]
- * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
- * Confidence: medium; compile-time sizeof on the concrete target remains authoritative for ABI-sensitive/opaque members.
- * End ESPressio Memory Audit
- */
+
 class StartAddressRadio final : public IRadio {
 public:
     explicit StartAddressRadio(bool resolvesAddress) : _resolvesAddress(resolvesAddress) {}
@@ -146,15 +118,7 @@ private:
     RadioObserverSubscriptions _observers{};
 };
 
-/**
- * ESPressio Memory Audit
- * Inherited Memory Total: 4 bytes [0 bytes dynamic allocation]
- * Members:
- * - _transport (RadioTransport&): 4 bytes [0 bytes dynamic allocation]
- * Total Memory: 8 bytes [0 bytes dynamic allocation]
- * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
- * End ESPressio Memory Audit
- */
+
 class TestIngress final : public IRadioReceiver {
 public:
     explicit TestIngress(RadioTransport& transport) : _transport(transport) {}
@@ -168,23 +132,7 @@ private:
     RadioTransport& _transport;
 };
 
-/**
- * ESPressio Memory Audit
- * Inherited Memory Total: 4 bytes [0 bytes dynamic allocation]
- * Members:
- * - Interface (IRadio*): 4 bytes [0 bytes dynamic allocation]
- * - SourcePeer (RadioPeerHandle): 4 bytes [0 bytes dynamic allocation]
- * - Source (RadioAddress): 9 bytes [0 bytes dynamic allocation]
- * - Destination (RadioAddress): 9 bytes [0 bytes dynamic allocation]
- * - TransferId (RadioTransferId): 2 bytes [0 bytes dynamic allocation]
- * - Flags (RadioPacketFlag): 1 bytes [0 bytes dynamic allocation]
- * - Payload (std::vector<uint8_t>): 12 bytes [Capacity * (1 bytes) element storage]
- * - Count (int): 4 bytes [0 bytes dynamic allocation]
- * Total Memory: 52 bytes [Payload: Capacity * (1 bytes) element storage]
- * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
- * Confidence: medium; compile-time sizeof on the concrete target remains authoritative for ABI-sensitive/opaque members.
- * End ESPressio Memory Audit
- */
+
 class CaptureReceiver final : public IRadioTransportReceiver {
 public:
     void OnRadioTransportMessage(IRadio& radio, const RadioTransportMessageView& message) override {
@@ -208,19 +156,7 @@ public:
     int Count = 0;
 };
 
-/**
- * ESPressio Memory Audit
- * Inherited Memory Total: 12 bytes [0 bytes dynamic allocation]
- * Members:
- * - Started (int): 4 bytes [0 bytes dynamic allocation]
- * - Stopped (int): 4 bytes [0 bytes dynamic allocation]
- * - Received (int): 4 bytes [0 bytes dynamic allocation]
- * - Sent (int): 4 bytes [0 bytes dynamic allocation]
- * - LastSendAccepted (bool): 1 bytes [0 bytes dynamic allocation]
- * Total Memory: 32 bytes [0 bytes dynamic allocation]
- * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
- * End ESPressio Memory Audit
- */
+
 class LinkObserver final :
     public IRadioLifecycleObserver,
     public IRadioPacketObserver,
@@ -241,27 +177,7 @@ public:
     bool LastSendAccepted = false;
 };
 
-/**
- * ESPressio Memory Audit
- * Inherited Memory Total: 16 bytes [0 bytes dynamic allocation]
- * Members:
- * - Started (int): 4 bytes [0 bytes dynamic allocation]
- * - Stopped (int): 4 bytes [0 bytes dynamic allocation]
- * - InterfacesAdded (int): 4 bytes [0 bytes dynamic allocation]
- * - InterfacesRemoved (int): 4 bytes [0 bytes dynamic allocation]
- * - PeersObserved (int): 4 bytes [0 bytes dynamic allocation]
- * - PeersInvalidated (int): 4 bytes [0 bytes dynamic allocation]
- * - Sends (int): 4 bytes [0 bytes dynamic allocation]
- * - Received (int): 4 bytes [0 bytes dynamic allocation]
- * - LastSendAccepted (bool): 1 bytes [0 bytes dynamic allocation]
- * - LastPeerInterface (IRadio*): 4 bytes [0 bytes dynamic allocation]
- * - LastPeer (RadioPeerHandle): 4 bytes [0 bytes dynamic allocation]
- * - LastPeerAddress (RadioAddress): 9 bytes [0 bytes dynamic allocation]
- * - LastInvalidationReason (RadioPeerInvalidationReason): 1 bytes [0 bytes dynamic allocation]
- * Total Memory: 72 bytes [0 bytes dynamic allocation]
- * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
- * End ESPressio Memory Audit
- */
+
 class TransportObserver final :
     public IRadioTransportLifecycleObserver,
     public IRadioTransportInterfaceObserver,

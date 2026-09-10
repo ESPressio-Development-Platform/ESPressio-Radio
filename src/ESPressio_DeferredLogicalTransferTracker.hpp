@@ -10,15 +10,7 @@
 namespace ESPressio::Radio {
 
 /// <summary>Generation-safe local handle for one RadioTransport logical transfer awaiting terminal link evidence.</summary>
-/**
- * ESPressio Memory Audit
- * Members:
- * - Slot (std::uint16_t): 2 bytes [0 bytes dynamic allocation]
- * - Generation (std::uint16_t): 2 bytes [0 bytes dynamic allocation]
- * Total Memory: 4 bytes [0 bytes dynamic allocation]
- * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
- * End ESPressio Memory Audit
- */
+
 struct DeferredLogicalTransferHandle final {
     std::uint16_t Slot{std::numeric_limits<std::uint16_t>::max()};
     std::uint16_t Generation{0};
@@ -33,18 +25,7 @@ struct DeferredLogicalTransferHandle final {
 };
 
 /// <summary>RadioTransport-owned immutable identity/context for one accepted logical transfer.</summary>
-/**
- * ESPressio Memory Audit
- * Members:
- * - Radio (IRadio*): 4 bytes [0 bytes dynamic allocation]
- * - Peer (RadioPeerHandle): 4 bytes [0 bytes dynamic allocation]
- * - Destination (RadioAddress): 9 bytes [0 bytes dynamic allocation]
- * - TransferId (RadioTransferId): 2 bytes [0 bytes dynamic allocation]
- * - PayloadBytes (std::uint16_t): 2 bytes [0 bytes dynamic allocation]
- * Total Memory: 24 bytes [0 bytes dynamic allocation]
- * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
- * End ESPressio Memory Audit
- */
+
 struct DeferredLogicalTransferDescriptor final {
     IRadio* Radio{nullptr};
     RadioPeerHandle Peer{};
@@ -58,13 +39,7 @@ struct DeferredLogicalTransferDescriptor final {
 };
 
 /// <summary>Result of registering one accepted physical fragment with a deferred logical-transfer tracker.</summary>
-/**
- * ESPressio Memory Audit
- * Underlying storage: 1 bytes
- * Total Memory: 1 bytes [0 bytes dynamic allocation]
- * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
- * End ESPressio Memory Audit
- */
+
 enum class DeferredFragmentRegistrationResult : std::uint8_t {
     Registered,
     LogicalTransferTerminal,
@@ -74,13 +49,7 @@ enum class DeferredFragmentRegistrationResult : std::uint8_t {
 };
 
 /// <summary>Result of applying one provider terminal observation.</summary>
-/**
- * ESPressio Memory Audit
- * Underlying storage: 1 bytes
- * Total Memory: 1 bytes [0 bytes dynamic allocation]
- * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
- * End ESPressio Memory Audit
- */
+
 enum class DeferredResolutionResult : std::uint8_t {
     Pending,
     LogicalTransferTerminal,
@@ -89,16 +58,7 @@ enum class DeferredResolutionResult : std::uint8_t {
 };
 
 /// <summary>One terminal aggregate for a complete Radio-owned logical transfer.</summary>
-/**
- * ESPressio Memory Audit
- * Members:
- * - Transfer (DeferredLogicalTransferHandle): 4 bytes [0 bytes dynamic allocation]
- * - Descriptor (DeferredLogicalTransferDescriptor): 24 bytes [0 bytes dynamic allocation]
- * - Evidence (RadioDirectLinkEvidence): 2 bytes [0 bytes dynamic allocation]
- * Total Memory: 32 bytes [0 bytes dynamic allocation]
- * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
- * End ESPressio Memory Audit
- */
+
 struct LogicalTransferTerminalEvidence final {
     DeferredLogicalTransferHandle Transfer{};
     DeferredLogicalTransferDescriptor Descriptor{};
@@ -108,13 +68,7 @@ struct LogicalTransferTerminalEvidence final {
 /// <summary>
 /// Capacity-erased correlation contract consumed by RadioTransport. Concrete capacity remains an explicit composition choice.
 /// </summary>
-/**
- * ESPressio Memory Audit
- * Members: none; polymorphic/virtual-base object metadata is included in the total.
- * Total Memory: 4 bytes [0 bytes dynamic allocation]
- * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
- * End ESPressio Memory Audit
- */
+
 class IDeferredLogicalTransferTracker {
 public:
     virtual ~IDeferredLogicalTransferTracker() = default;
@@ -159,28 +113,13 @@ public:
 /// immediately on return before yielding its serialized execution domain. Clear is reset/shutdown cleanup only and emits
 /// no fabricated terminal evidence for work whose provider outcome was never established.
 /// </remarks>
-/**
- * ESPressio Memory Audit
- * Inherited Memory Total: 4 bytes [0 bytes dynamic allocation]
- * Members:
- * - _records (std::array<Record, Capacity>): Capacity * (4116 bytes) [0 bytes dynamic allocation]
- * Total Memory: 4 bytes known/aligned storage + Capacity * (4116 bytes) [0 bytes dynamic allocation]
- * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
- * Confidence: low; compile-time sizeof on the concrete target remains authoritative for ABI-sensitive/opaque members.
- * End ESPressio Memory Audit
- */
+
 template<std::size_t Capacity>
 class DeferredLogicalTransferTracker final : public IDeferredLogicalTransferTracker {
     static_assert(Capacity > 0U, "Deferred logical-transfer capacity must be explicit and non-zero.");
     static_assert(Capacity <= std::numeric_limits<std::uint16_t>::max(), "Capacity must fit the handle slot.");
 
-/**
- * ESPressio Memory Audit
- * Underlying storage: 1 bytes
- * Total Memory: 1 bytes [0 bytes dynamic allocation]
- * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
- * End ESPressio Memory Audit
- */
+
 enum class FragmentState : std::uint8_t {
         Unregistered,
         TerminalCompleted,
@@ -189,17 +128,7 @@ enum class FragmentState : std::uint8_t {
         Unobservable
     };
 
-/**
- * ESPressio Memory Audit
- * Members:
- * - State (FragmentState): 1 bytes [0 bytes dynamic allocation]
- * - Radio (IRadio*): 4 bytes [0 bytes dynamic allocation]
- * - Transmission (RadioTransmissionHandle): 4 bytes [0 bytes dynamic allocation]
- * - PeerAcknowledgement (RadioPeerAcknowledgement): 1 bytes [0 bytes dynamic allocation]
- * Total Memory: 16 bytes [0 bytes dynamic allocation]
- * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
- * End ESPressio Memory Audit
- */
+
 struct FragmentRecord final {
         FragmentState State{FragmentState::Unregistered};
         IRadio* Radio{nullptr};
@@ -207,23 +136,7 @@ struct FragmentRecord final {
         RadioPeerAcknowledgement PeerAcknowledgement{RadioPeerAcknowledgement::Unavailable};
     };
 
-/**
- * ESPressio Memory Audit
- * Members:
- * - Used (bool): 1 bytes [0 bytes dynamic allocation]
- * - Generation (std::uint16_t): 2 bytes [0 bytes dynamic allocation]
- * - FragmentCount (std::uint8_t): 1 bytes [0 bytes dynamic allocation]
- * - RegisteredCount (std::uint8_t): 1 bytes [0 bytes dynamic allocation]
- * - TerminalCount (std::uint8_t): 1 bytes [0 bytes dynamic allocation]
- * - AnyFailure (bool): 1 bytes [0 bytes dynamic allocation]
- * - AnyAcknowledgementUnavailable (bool): 1 bytes [0 bytes dynamic allocation]
- * - AllAcknowledged (bool): 1 bytes [0 bytes dynamic allocation]
- * - Descriptor (DeferredLogicalTransferDescriptor): 24 bytes [0 bytes dynamic allocation]
- * - Fragments (std::array<FragmentRecord, 255>): 4080 bytes [0 bytes dynamic allocation]
- * Total Memory: 4116 bytes [0 bytes dynamic allocation]
- * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
- * End ESPressio Memory Audit
- */
+
 struct Record final {
         bool Used{false};
         std::uint16_t Generation{0};

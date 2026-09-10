@@ -15,15 +15,7 @@ using RadioEventPayload = System::Memory::ByteVector<
 >;
 
 /// <summary>Base snapshot shared by concrete-radio lifecycle events.</summary>
-/**
- * ESPressio Memory Audit
- * Members:
- * - LocalAddress (Radio::RadioAddress): 9 bytes [0 bytes dynamic allocation]
- * - Capabilities (Radio::RadioCapabilities): 12 bytes [0 bytes dynamic allocation]
- * Total Memory: 24 bytes [0 bytes dynamic allocation]
- * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
- * End ESPressio Memory Audit
- */
+
 struct RadioEventSourceSnapshot {
     Radio::RadioAddress LocalAddress{};
     Radio::RadioCapabilities Capabilities{};
@@ -32,30 +24,14 @@ struct RadioEventSourceSnapshot {
         : LocalAddress(radio.LocalAddress()), Capabilities(radio.Capabilities()) {}
 };
 
-/**
- * ESPressio Memory Audit
- * Inherited Memory Total: 24 bytes [0 bytes dynamic allocation]
- * Members:
- * - Radio (RadioEventSourceSnapshot): 24 bytes [0 bytes dynamic allocation]
- * Total Memory: 48 bytes [0 bytes dynamic allocation]
- * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
- * End ESPressio Memory Audit
- */
+
 class RadioStartedEvent final : public TypedEvent<RadioStartedEvent> {
 public:
     const RadioEventSourceSnapshot Radio;
     explicit RadioStartedEvent(Radio::IRadio& radio) noexcept : Radio(radio) {}
 };
 
-/**
- * ESPressio Memory Audit
- * Inherited Memory Total: 24 bytes [0 bytes dynamic allocation]
- * Members:
- * - Radio (RadioEventSourceSnapshot): 24 bytes [0 bytes dynamic allocation]
- * Total Memory: 48 bytes [0 bytes dynamic allocation]
- * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
- * End ESPressio Memory Audit
- */
+
 class RadioStoppedEvent final : public TypedEvent<RadioStoppedEvent> {
 public:
     const RadioEventSourceSnapshot Radio;
@@ -63,22 +39,7 @@ public:
 };
 
 /// <summary>Event emitted for a physical/link packet observed after RadioTransport has synchronously consumed it.</summary>
-/**
- * ESPressio Memory Audit
- * Inherited Memory Total: 24 bytes [0 bytes dynamic allocation]
- * Members:
- * - Radio (RadioEventSourceSnapshot): 24 bytes [0 bytes dynamic allocation]
- * - Source (Radio::RadioAddress): 9 bytes [0 bytes dynamic allocation]
- * - Destination (Radio::RadioAddress): 9 bytes [0 bytes dynamic allocation]
- * - RssiDbm (int16_t): 2 bytes [0 bytes dynamic allocation]
- * - ReceiveTimestampNanoseconds (uint64_t): 8 bytes [0 bytes dynamic allocation]
- * - Flags (Radio::RadioPacketFlag): 1 bytes [0 bytes dynamic allocation]
- * - Payload (RadioEventPayload): 12 bytes [Capacity * (1 bytes) element storage]
- * Total Memory: 92 bytes [Payload: Capacity * (1 bytes) element storage]
- * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
- * Confidence: medium; compile-time sizeof on the concrete target remains authoritative for ABI-sensitive/opaque members.
- * End ESPressio Memory Audit
- */
+
 class RadioPacketReceivedEvent final : public TypedEvent<RadioPacketReceivedEvent> {
 public:
     const RadioEventSourceSnapshot Radio;
@@ -111,18 +72,7 @@ private:
 /// This event is not a transmission-completion event. `Result.Evidence` contains any stronger direct-link fact the
 /// provider could synchronously prove; technologies without such proof leave completion/acknowledgement unknown.
 /// </remarks>
-/**
- * ESPressio Memory Audit
- * Inherited Memory Total: 24 bytes [0 bytes dynamic allocation]
- * Members:
- * - Radio (RadioEventSourceSnapshot): 24 bytes [0 bytes dynamic allocation]
- * - Destination (Radio::RadioAddress): 9 bytes [0 bytes dynamic allocation]
- * - PayloadSize (std::size_t): 4 bytes [0 bytes dynamic allocation]
- * - Result (Radio::RadioSendResult): 16 bytes [0 bytes dynamic allocation]
- * Total Memory: 80 bytes [0 bytes dynamic allocation]
- * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
- * End ESPressio Memory Audit
- */
+
 class RadioSendAttemptedEvent final : public TypedEvent<RadioSendAttemptedEvent> {
 public:
     const RadioEventSourceSnapshot Radio;
@@ -139,37 +89,15 @@ public:
 };
 
 /// <summary>Event emitted after RadioTransport starts successfully.</summary>
-/**
- * ESPressio Memory Audit
- * Inherited Memory Total: 24 bytes [0 bytes dynamic allocation]
- * Members: none (standalone empty object occupies 1 byte; an eligible empty base may be optimized to 0 bytes).
- * Total Memory: 24 bytes [0 bytes dynamic allocation]
- * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
- * End ESPressio Memory Audit
- */
+
 class RadioTransportStartedEvent final : public TypedEvent<RadioTransportStartedEvent> {};
 
 /// <summary>Event emitted after RadioTransport stops.</summary>
-/**
- * ESPressio Memory Audit
- * Inherited Memory Total: 24 bytes [0 bytes dynamic allocation]
- * Members: none (standalone empty object occupies 1 byte; an eligible empty base may be optimized to 0 bytes).
- * Total Memory: 24 bytes [0 bytes dynamic allocation]
- * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
- * End ESPressio Memory Audit
- */
+
 class RadioTransportStoppedEvent final : public TypedEvent<RadioTransportStoppedEvent> {};
 
 /// <summary>Event emitted when a physical/link Radio interface is registered with RadioTransport.</summary>
-/**
- * ESPressio Memory Audit
- * Inherited Memory Total: 24 bytes [0 bytes dynamic allocation]
- * Members:
- * - Radio (RadioEventSourceSnapshot): 24 bytes [0 bytes dynamic allocation]
- * Total Memory: 48 bytes [0 bytes dynamic allocation]
- * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
- * End ESPressio Memory Audit
- */
+
 class RadioInterfaceAddedEvent final : public TypedEvent<RadioInterfaceAddedEvent> {
 public:
     const RadioEventSourceSnapshot Radio;
@@ -177,15 +105,7 @@ public:
 };
 
 /// <summary>Event emitted when a physical/link Radio interface is removed from RadioTransport.</summary>
-/**
- * ESPressio Memory Audit
- * Inherited Memory Total: 24 bytes [0 bytes dynamic allocation]
- * Members:
- * - Radio (RadioEventSourceSnapshot): 24 bytes [0 bytes dynamic allocation]
- * Total Memory: 48 bytes [0 bytes dynamic allocation]
- * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
- * End ESPressio Memory Audit
- */
+
 class RadioInterfaceRemovedEvent final : public TypedEvent<RadioInterfaceRemovedEvent> {
 public:
     const RadioEventSourceSnapshot Radio;
@@ -197,18 +117,7 @@ public:
 /// The result is the synchronous transport-attempt result. `Result.LinkResult.Evidence` must be inspected before
 /// interpreting transmission completion or peer acknowledgement.
 /// </remarks>
-/**
- * ESPressio Memory Audit
- * Inherited Memory Total: 24 bytes [0 bytes dynamic allocation]
- * Members:
- * - Radio (RadioEventSourceSnapshot): 24 bytes [0 bytes dynamic allocation]
- * - Destination (Radio::RadioAddress): 9 bytes [0 bytes dynamic allocation]
- * - PayloadSize (std::size_t): 4 bytes [0 bytes dynamic allocation]
- * - Result (Radio::RadioTransportSendResult): 24 bytes [0 bytes dynamic allocation]
- * Total Memory: 88 bytes [0 bytes dynamic allocation]
- * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
- * End ESPressio Memory Audit
- */
+
 class RadioTransportSendAttemptedEvent final : public TypedEvent<RadioTransportSendAttemptedEvent> {
 public:
     const RadioEventSourceSnapshot Radio;
@@ -225,19 +134,7 @@ public:
 };
 
 /// <summary>Owned asynchronous snapshot of one complete opaque direct-link Radio transfer.</summary>
-/**
- * ESPressio Memory Audit
- * Members:
- * - Source (Radio::RadioAddress): 9 bytes [0 bytes dynamic allocation]
- * - Destination (Radio::RadioAddress): 9 bytes [0 bytes dynamic allocation]
- * - TransferId (Radio::RadioTransferId): 2 bytes [0 bytes dynamic allocation]
- * - Flags (Radio::RadioPacketFlag): 1 bytes [0 bytes dynamic allocation]
- * - Payload (RadioEventPayload): 12 bytes [Capacity * (1 bytes) element storage]
- * Total Memory: 36 bytes [Payload: Capacity * (1 bytes) element storage]
- * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
- * Confidence: medium; compile-time sizeof on the concrete target remains authoritative for ABI-sensitive/opaque members.
- * End ESPressio Memory Audit
- */
+
 struct RadioTransportMessageEventSnapshot {
     Radio::RadioAddress Source{};
     Radio::RadioAddress Destination{};
@@ -257,17 +154,7 @@ struct RadioTransportMessageEventSnapshot {
 };
 
 /// <summary>Event emitted after a complete direct-link logical transfer is delivered by RadioTransport.</summary>
-/**
- * ESPressio Memory Audit
- * Inherited Memory Total: 24 bytes [0 bytes dynamic allocation]
- * Members:
- * - Radio (RadioEventSourceSnapshot): 24 bytes [0 bytes dynamic allocation]
- * - Message (RadioTransportMessageEventSnapshot): 36 bytes [Payload: Capacity * (1 bytes) element storage]
- * Total Memory: 84 bytes [Message: Payload: Capacity * (1 bytes) element storage]
- * Basis: ESP32/Xtensa ILP32 reference ABI (4-byte pointers/size_t); ESPressio stateful allocators/deleters included; ABI-sensitive STL/platform internals are identified explicitly.
- * Confidence: medium; compile-time sizeof on the concrete target remains authoritative for ABI-sensitive/opaque members.
- * End ESPressio Memory Audit
- */
+
 class RadioTransportMessageReceivedEvent final : public TypedEvent<RadioTransportMessageReceivedEvent> {
 public:
     const RadioEventSourceSnapshot Radio;
