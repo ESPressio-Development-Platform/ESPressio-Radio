@@ -63,7 +63,6 @@ int main(){
         auto best=scheduler.Submit(provider,provider.LocalAddress(),Expiry(RadioServiceClass::BestEffort),ExpiryTiming(),bytes20,20);
         auto critical=scheduler.Submit(provider,provider.LocalAddress(),Expiry(RadioServiceClass::Critical),ExpiryTiming(),bytes5,5);
         assert(best&&critical&&wakes.Count>=2);
-        // Critical receives a class visit before the queued BestEffort transfer; BestEffort then advances one fragment per service quantum.
         assert(scheduler.Service(1).Status==RadioSchedulerStatus::Success);assert(provider.SendCalls==1);assert(provider.Classes[0]==RadioServiceClass::Critical);
         assert(scheduler.Service(2).Status==RadioSchedulerStatus::Success);assert(provider.SendCalls==2);assert(provider.Classes[1]==RadioServiceClass::BestEffort&&provider.Fragments[1]==0);
         assert(scheduler.Service(3).Status==RadioSchedulerStatus::Success);assert(provider.SendCalls==3&&provider.Fragments[2]==1);
@@ -72,7 +71,6 @@ int main(){
         assert(scheduler.Shutdown()==RadioSchedulerStatus::Success);
     }
     {
-        // A deferred provider holds the whole contention domain until exact terminal completion; stale completion cannot release it.
         Outbound capacity;capacity.Initialize();Provider first;Provider second;first.CurrentMode=Provider::Mode::Deferred;second.CurrentMode=Provider::Mode::Immediate;
         ResultSink results;Scheduler scheduler(capacity,{1});assert(scheduler.BindProvider(first)==RadioSchedulerStatus::Success);assert(scheduler.BindProvider(second)==RadioSchedulerStatus::Success);assert(scheduler.Initialize(&results)==RadioSchedulerStatus::Success);
         assert(scheduler.Submit(first,first.LocalAddress(),Expiry(RadioServiceClass::Responsive),ExpiryTiming(),bytes5,5));
@@ -84,7 +82,6 @@ int main(){
         assert(!scheduler.HasOutstandingFragment()&&second.SendCalls==1&&results.Count==2);
     }
     {
-        // Busy retains the exact head and resumes only after provider readiness wake.
         Outbound capacity;capacity.Initialize();Provider provider;provider.CurrentMode=Provider::Mode::BusyOnce;ResultSink results;WakeCounter wakes;Scheduler scheduler(capacity,{1});
         assert(scheduler.BindProvider(provider)==RadioSchedulerStatus::Success);assert(scheduler.Initialize(&results,{&wakes,&WakeCounter::Wake})==RadioSchedulerStatus::Success);
         assert(scheduler.Submit(provider,provider.LocalAddress(),Expiry(RadioServiceClass::Responsive),ExpiryTiming(),bytes5,5));
@@ -93,17 +90,15 @@ int main(){
         scheduler.Service(3);assert(provider.SendCalls==2&&results.Count==1&&results.Results[0].Status==RadioTransferTerminalStatus::Completed);
     }
     {
-        // Required peer acknowledgement is never synthesized from completion alone.
         Outbound capacity;capacity.Initialize();Provider provider;ResultSink results;Scheduler scheduler(capacity,{1});
         assert(scheduler.BindProvider(provider)==RadioSchedulerStatus::Success);assert(scheduler.Initialize(&results)==RadioSchedulerStatus::Success);
         assert(scheduler.Submit(provider,provider.LocalAddress(),Expiry(RadioServiceClass::Critical,RadioDirectLinkEvidenceRequirement::PeerAcknowledgement),ExpiryTiming(),bytes5,5));
         scheduler.Service(1);assert(results.Count==1&&results.Results[0].Status==RadioTransferTerminalStatus::EvidenceInsufficient);
     }
     {
-        // Urgent Clock work may borrow bounded debt; the next ordinary Clock transfer must repay through future quanta.
         Outbound capacity;capacity.Initialize();Provider provider;ResultSink results;DebtScheduler scheduler(capacity,{1});
         assert(scheduler.BindProvider(provider)==RadioSchedulerStatus::Success);assert(scheduler.Initialize(&results)==RadioSchedulerStatus::Success);
-        RadioTransferTiming urgent{1'000'000,50};assert(scheduler.Submit(provider,provider.LocalAddress(),Promote(RadioServiceClass::Clock),urgent,bytes5,5));
+        RadioTransferTiming urgent{100'000'000ULL,50};assert(scheduler.Submit(provider,provider.LocalAddress(),Promote(RadioServiceClass::Clock),urgent,bytes5,5));
         scheduler.Service(1);assert(provider.SendCalls==1&&results.Count==1);
         assert(scheduler.Submit(provider,provider.LocalAddress(),Expiry(RadioServiceClass::Clock),ExpiryTiming(),bytes5,5));
         scheduler.Service(2);assert(provider.SendCalls==1);
@@ -112,7 +107,6 @@ int main(){
         scheduler.Service(5);assert(provider.SendCalls==2&&results.Count==2);
     }
     {
-        // Independent contention domains make progress independently.
         Outbound capA;Outbound capB;capA.Initialize();capB.Initialize();Provider a;Provider b;a.Domain={1};b.Domain={2};ResultSink ra,rb;Scheduler sa(capA,{1}),sb(capB,{2});
         assert(sa.BindProvider(a)==RadioSchedulerStatus::Success&&sb.BindProvider(b)==RadioSchedulerStatus::Success);assert(sa.Initialize(&ra)==RadioSchedulerStatus::Success&&sb.Initialize(&rb)==RadioSchedulerStatus::Success);
         assert(sa.Submit(a,a.LocalAddress(),Expiry(RadioServiceClass::BestEffort),ExpiryTiming(),bytes5,5));assert(sb.Submit(b,b.LocalAddress(),Expiry(RadioServiceClass::BestEffort),ExpiryTiming(),bytes5,5));
