@@ -17,10 +17,13 @@ jobs:
         run: git clone --depth 1 --branch primitives_redesign https://github.com/ESPressio-Development-Platform/ESPressio-Task.git deps/Task
       - name: Checkout Timing substrate
         run: git clone --depth 1 --branch primitives_redesign https://github.com/ESPressio-Development-Platform/ESPressio-Timing.git deps/Timing
+      - name: Checkout Units substrate
+        run: git clone --depth 1 --branch primitives_redesign https://github.com/ESPressio-Development-Platform/ESPressio-Units.git deps/Units
       - name: Compile canonical Radio umbrella without predecessor dependencies
         run: >-
           g++ -std=c++17 -Wall -Wextra -Werror -fno-rtti
-          -Isrc -Ideps/System/src -Ideps/Task/src -Ideps/Timing/src tests/radio_canonical_umbrella_tests.cpp -o radio_canonical_umbrella_tests -pthread
+          -Itests/host_arduino -Isrc -Ideps/System/src -Ideps/Task/src -Ideps/Timing/src -Ideps/Units/src
+          tests/radio_canonical_umbrella_tests.cpp -o radio_canonical_umbrella_tests -pthread
       - name: Run canonical Radio umbrella contract
         run: ./radio_canonical_umbrella_tests
       - name: Build R7 foundation contracts without RTTI/exceptions
@@ -41,6 +44,13 @@ jobs:
           -Isrc -Ideps/Timing/src tests/radio_clock_wire_v1_tests.cpp -o radio_clock_wire_v1_tests
       - name: Run compact Clock wire/capture contracts
         run: ./radio_clock_wire_v1_tests
+      - name: Build adaptive Clock coordinator contracts
+        run: >-
+          g++ -std=c++17 -Wall -Wextra -Werror -fno-rtti
+          -Itests/host_arduino -Isrc -Ideps/System/src -Ideps/Timing/src -Ideps/Units/src
+          tests/radio_clock_coordinator_tests.cpp -o radio_clock_coordinator_tests -pthread
+      - name: Run adaptive Clock coordinator contracts
+        run: ./radio_clock_coordinator_tests
       - name: Build System-backed Radio-local Q1 capacity contracts
         run: >-
           g++ -std=c++17 -Wall -Wextra -Werror -fno-rtti
