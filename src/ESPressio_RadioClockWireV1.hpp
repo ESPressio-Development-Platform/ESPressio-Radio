@@ -13,8 +13,10 @@ namespace ESPressio::Radio {
 /// <summary>Compact single-physical-frame K1/K2 direct-Radio synchronization wire.</summary>
 /// <remarks>
 /// The requester retains T1 and the selected reference identity locally, so neither is redundantly returned on wire.
-/// A response carries only correlation, reference-side T2/T3 System timestamps and bounded quality facts. The exact
-/// response is 32 bytes, satisfying an nRF24-class certified MTU without fragmentation.
+/// A response carries correlation, reference-side T2 System time, exact bounded T2->T3 System and raw-monotonic
+/// processing durations, plus reference/capture quality facts. Reconstructing T3 from the transmitted System duration
+/// preserves the four-System-timestamp equation, while the separate monotonic duration preserves K1 structural
+/// chronology without fabricating a remote monotonic coordinate. The exact response remains 32 bytes.
 /// </remarks>
 struct RadioClockWireV1 final {
     static constexpr std::uint16_t Magic = 0x4352u; // little-endian "RC"
@@ -47,7 +49,8 @@ struct RadioClockRequestV1 final {
 struct RadioClockResponseV1 final {
     std::uint32_t Sequence{0};
     std::uint64_t T2SystemNanoseconds{0};
-    std::uint64_t T3SystemNanoseconds{0};
+    std::uint32_t RemoteSystemProcessingNanoseconds{0};
+    std::uint32_t RemoteMonotonicProcessingNanoseconds{0};
     Timing::TimeReliability ReferenceReliability{Timing::TimeReliability::Unqualified};
     RadioClockCaptureQuality CaptureQuality{RadioClockCaptureQuality::Invalid};
     Timing::ClockUncertainty ReferenceUncertainty{};
@@ -153,7 +156,8 @@ inline bool EncodeRadioClockResponseV1(
        !Detail::EncodeClockUncertainty24(response.CaptureUncertainty,captureUncertainty)||
        !Detail::EncodeClockHeader(output,capacity,RadioClockMessageType::Response,response.Sequence))return false;
     Detail::WriteClockU64(output+8,response.T2SystemNanoseconds);
-    Detail::WriteClockU64(output+16,response.T3SystemNanoseconds);
+    Detail::WriteClockU32(output+16,response.RemoteSystemProcessingNanoseconds);
+    Detail::WriteClockU32(output+20,response.RemoteMonotonicProcessingNanoseconds);
     output[24]=static_cast<std::uint8_t>(response.ReferenceReliability);
     output[25]=static_cast<std::uint8_t>(response.CaptureQuality);
     Detail::WriteClockU24(output+26,referenceUncertainty);
@@ -171,7 +175,8 @@ inline bool DecodeRadioClockResponseV1(
     if(!Timing::IsValidTimeReliability(reliability)||!Detail::ValidClockCaptureQuality(quality))return false;
     response.Sequence=sequence;
     response.T2SystemNanoseconds=Detail::ReadClockU64(input+8);
-    response.T3SystemNanoseconds=Detail::ReadClockU64(input+16);
+    response.RemoteSystemProcessingNanoseconds=Detail::ReadClockU32(input+16);
+    response.RemoteMonotonicProcessingNanoseconds=Detail::ReadClockU32(input+20);
     response.ReferenceReliability=reliability;
     response.CaptureQuality=quality;
     response.ReferenceUncertainty=Detail::DecodeClockUncertainty24(Detail::ReadClockU24(input+26));

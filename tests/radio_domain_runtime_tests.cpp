@@ -118,8 +118,11 @@ int main(){
     HostExecution execution;
     FakeScheduler scheduler;
     FakeExtension extension;
-    scheduler.Deadline.store(9'000'000'000ULL);
-    extension.Deadline.store(7'000'000'000ULL);
+    const auto now=System::Clock::Monotonic().NowNanoseconds();
+    const auto schedulerDeadline=now+9'000'000'000ULL;
+    const auto extensionDeadline=now+7'000'000'000ULL;
+    scheduler.Deadline.store(schedulerDeadline);
+    extension.Deadline.store(extensionDeadline);
     RadioDomainRuntime<FakeScheduler> runtime(scheduler,execution);
     assert(runtime.BindServiceExtension(&extension)==RadioDomainRuntimeStatus::Success);
     assert(runtime.Initialize(nullptr)==RadioDomainRuntimeStatus::Success);
@@ -128,7 +131,7 @@ int main(){
     assert(runtime.Start()==RadioDomainRuntimeStatus::Success);
     WaitFor(scheduler.ServiceCount,1);
     WaitFor(extension.ServiceCount,1);
-    assert(runtime.EarliestDeadlineNanoseconds()==7'000'000'000ULL);
+    assert(runtime.EarliestDeadlineNanoseconds()==extensionDeadline);
     const auto first=scheduler.ServiceCount.load();
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
     assert(scheduler.ServiceCount.load()==first); // genuinely blocked: no fixed polling cadence

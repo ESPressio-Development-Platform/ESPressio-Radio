@@ -25,7 +25,8 @@ int main(){
     RadioClockResponseV1 response{};
     response.Sequence=0x55667788u;
     response.T2SystemNanoseconds=0x0102030405060708ULL;
-    response.T3SystemNanoseconds=0x1112131415161718ULL;
+    response.RemoteSystemProcessingNanoseconds=0x11223344u;
+    response.RemoteMonotonicProcessingNanoseconds=0x55667788u;
     response.ReferenceReliability=ESPressio::Timing::TimeReliability::Synchronized;
     response.CaptureQuality=RadioClockCaptureQuality::Hardware;
     response.ReferenceUncertainty=ESPressio::Timing::ClockUncertainty::Known(450'000u);
@@ -36,11 +37,17 @@ int main(){
     assert(DecodeRadioClockResponseV1(responseWire.data(),responseWire.size(),decodedResponse));
     assert(decodedResponse.Sequence==response.Sequence);
     assert(decodedResponse.T2SystemNanoseconds==response.T2SystemNanoseconds);
-    assert(decodedResponse.T3SystemNanoseconds==response.T3SystemNanoseconds);
+    assert(decodedResponse.RemoteSystemProcessingNanoseconds==response.RemoteSystemProcessingNanoseconds);
+    assert(decodedResponse.RemoteMonotonicProcessingNanoseconds==response.RemoteMonotonicProcessingNanoseconds);
     assert(decodedResponse.ReferenceReliability==response.ReferenceReliability);
     assert(decodedResponse.CaptureQuality==response.CaptureQuality);
     assert(decodedResponse.ReferenceUncertainty.IsKnown&&decodedResponse.ReferenceUncertainty.Nanoseconds==450'000u);
     assert(decodedResponse.CaptureUncertainty.IsKnown&&decodedResponse.CaptureUncertainty.Nanoseconds==12'345u);
+
+    // Exact vector proves the 32-byte packing and independent System/monotonic remote processing durations.
+    assert(responseWire[0]==0x52&&responseWire[1]==0x43&&responseWire[2]==1&&responseWire[3]==2);
+    assert(responseWire[16]==0x44&&responseWire[17]==0x33&&responseWire[18]==0x22&&responseWire[19]==0x11);
+    assert(responseWire[20]==0x88&&responseWire[21]==0x77&&responseWire[22]==0x66&&responseWire[23]==0x55);
 
     response.ReferenceUncertainty={};
     assert(EncodeRadioClockResponseV1(response,responseWire.data(),responseWire.size()));
