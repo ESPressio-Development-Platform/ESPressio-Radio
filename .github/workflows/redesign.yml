@@ -37,3 +37,9 @@ jobs:
           -Isrc -Ideps/System/src tests/radio_reassembly_redesign_tests.cpp -o radio_reassembly_redesign_tests -pthread
       - name: Run bounded v3 reassembly contracts
         run: ./radio_reassembly_redesign_tests
+      - name: Build R3 scheduler contracts
+        run: >-
+          g++ -std=c++17 -Wall -Wextra -Werror -fno-rtti
+          -Isrc -Ideps/System/src tests/radio_scheduler_redesign_tests.cpp -o radio_scheduler_redesign_tests -pthread
+      - name: Run R3 scheduler contracts
+        run: ./radio_scheduler_redesign_tests
