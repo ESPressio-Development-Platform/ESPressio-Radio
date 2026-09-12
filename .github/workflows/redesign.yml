@@ -59,6 +59,12 @@ jobs:
           -Isrc -Ideps/System/src -Ideps/Timing/src tests/radio_capacity_redesign_tests.cpp -o radio_capacity_redesign_tests -pthread
       - name: Run Radio-local Q1 capacity contracts
         run: ./radio_capacity_redesign_tests
+      - name: Build deterministic Radio resource accounting
+        run: >-
+          g++ -std=c++17 -Wall -Wextra -Werror -fno-rtti
+          -Isrc -Ideps/System/src -Ideps/Timing/src tests/radio_resource_accounting_tests.cpp -o radio_resource_accounting_tests -pthread
+      - name: Run deterministic Radio resource accounting
+        run: ./radio_resource_accounting_tests
       - name: Build bounded v3 reassembly contracts
         run: >-
           g++ -std=c++17 -Wall -Wextra -Werror -fno-rtti

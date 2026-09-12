@@ -15,3 +15,4 @@
 #include "ESPressio_RadioIngressRouter.hpp"
 #include "ESPressio_RadioClockCoordinator.hpp"
 #include "ESPressio_RadioRuntime.hpp"
+#include "ESPressio_RadioResources.hpp"
