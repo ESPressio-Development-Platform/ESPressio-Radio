@@ -4,7 +4,6 @@
 #include <cstdint>
 
 #include <ESPressio_ClockModelSnapshot.hpp>
-#include <ESPressio_ClockSynchronization.hpp>
 
 #include "ESPressio_RadioServiceProfile.hpp"
 #include "ESPressio_RadioTypes.hpp"
@@ -34,7 +33,7 @@ enum class RadioTimestampQuality : std::uint8_t {
 /// <remarks>
 /// A certified historical capture must retain the Timing model snapshot that was current at the capture boundary.
 /// Consumers never reconstruct historical System time from a later mutable clock value. The raw monotonic coordinate
-/// remains part of the Timing observation so K1/K2 can validate the original capture chronology and uncertainty.
+/// remains available for K1/K2 chronology and uncertainty validation.
 /// </remarks>
 struct RadioReceiveTimestampEvidence final {
     std::uint64_t ProviderCaptureCoordinate{0};
@@ -56,21 +55,9 @@ struct RadioReceiveTimestampEvidence final {
     bool IsCertifiedCandidate() const noexcept {
         return HasFiniteBound() && HasHistoricalModel() && Source != RadioTimestampCaptureSource::Unknown;
     }
-
-    /// <summary>Builds one capture-consistent Timing timestamp without using current mutable System time.</summary>
-    Timing::ClockTimestampCapture<> ToTimingCapture() const noexcept {
-        if (!IsCertifiedCandidate()) {
-            return {0, MonotonicNanoseconds, {}, Timing::ClockCaptureQuality::SoftwareUnbounded};
-        }
-        const auto captureQuality = Source == RadioTimestampCaptureSource::Hardware
-            ? Timing::ClockCaptureQuality::Hardware
-            : Timing::ClockCaptureQuality::SoftwareBounded;
-        return {
-            CaptureModel.Evaluate(MonotonicNanoseconds),
-            MonotonicNanoseconds,
-            Timing::ClockUncertainty::Known(ConservativeUncertaintyNanoseconds),
-            captureQuality
-        };
+    /// <summary>Evaluates the capture-time model, never a later mutable System clock.</summary>
+    std::uint64_t CapturedSystemNanoseconds() const noexcept {
+        return IsCertifiedCandidate() ? CaptureModel.Evaluate(MonotonicNanoseconds) : 0;
     }
 };
 

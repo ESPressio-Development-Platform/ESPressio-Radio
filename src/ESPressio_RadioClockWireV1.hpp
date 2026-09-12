@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
-#include <ESPressio_ClockSynchronization.hpp>
+#include <ESPressio_ClockUncertainty.hpp>
 #include <ESPressio_TimeReliability.hpp>
 
 #include "ESPressio_RadioTypes.hpp"
@@ -13,8 +13,8 @@ namespace ESPressio::Radio {
 /// <summary>Compact single-physical-frame K1/K2 direct-Radio synchronization wire.</summary>
 /// <remarks>
 /// The requester retains T1 and the selected reference identity locally, so neither is redundantly returned on wire.
-/// A response carries only the correlation sequence, reference-side T2/T3 System timestamps and bounded quality facts.
-/// The exact response is 32 bytes, satisfying an nRF24-class certified MTU without fragmentation.
+/// A response carries only correlation, reference-side T2/T3 System timestamps and bounded quality facts. The exact
+/// response is 32 bytes, satisfying an nRF24-class certified MTU without fragmentation.
 /// </remarks>
 struct RadioClockWireV1 final {
     static constexpr std::uint16_t Magic = 0x4352u; // little-endian "RC"
@@ -31,6 +31,13 @@ static_assert(RadioClockWireV1::ResponseBytes == 32u,
               "Clock response must remain one nRF24-class physical packet");
 
 enum class RadioClockMessageType : std::uint8_t { Request = 1, Response = 2 };
+/// <summary>Wire quality label mapped to Timing capture quality only by the Clock orchestration layer.</summary>
+enum class RadioClockCaptureQuality : std::uint8_t {
+    Invalid = 0,
+    Hardware = 1,
+    SoftwareBounded = 2,
+    SoftwareUnbounded = 3
+};
 
 struct RadioClockRequestV1 final {
     std::uint32_t Sequence{0};
@@ -42,7 +49,7 @@ struct RadioClockResponseV1 final {
     std::uint64_t T2SystemNanoseconds{0};
     std::uint64_t T3SystemNanoseconds{0};
     Timing::TimeReliability ReferenceReliability{Timing::TimeReliability::Unqualified};
-    Timing::ClockCaptureQuality CaptureQuality{Timing::ClockCaptureQuality::Invalid};
+    RadioClockCaptureQuality CaptureQuality{RadioClockCaptureQuality::Invalid};
     Timing::ClockUncertainty ReferenceUncertainty{};
     Timing::ClockUncertainty CaptureUncertainty{};
 };
@@ -92,6 +99,11 @@ inline Timing::ClockUncertainty DecodeClockUncertainty24(std::uint32_t encoded) 
         ? Timing::ClockUncertainty{}
         : Timing::ClockUncertainty::Known(encoded);
 }
+inline bool ValidClockCaptureQuality(RadioClockCaptureQuality value) noexcept {
+    return value==RadioClockCaptureQuality::Hardware ||
+           value==RadioClockCaptureQuality::SoftwareBounded ||
+           value==RadioClockCaptureQuality::SoftwareUnbounded;
+}
 inline bool EncodeClockHeader(
     std::uint8_t* output,std::size_t capacity,RadioClockMessageType type,std::uint32_t sequence) noexcept {
     if(!output||capacity<RadioClockWireV1::HeaderBytes||sequence==0)return false;
@@ -135,8 +147,7 @@ inline bool DecodeRadioClockRequestV1(
 inline bool EncodeRadioClockResponseV1(
     const RadioClockResponseV1& response,std::uint8_t* output,std::size_t capacity) noexcept {
     if(capacity<RadioClockWireV1::ResponseBytes||!Timing::IsValidTimeReliability(response.ReferenceReliability)||
-       response.CaptureQuality==Timing::ClockCaptureQuality::Invalid||
-       response.CaptureQuality>Timing::ClockCaptureQuality::SoftwareUnbounded)return false;
+       !Detail::ValidClockCaptureQuality(response.CaptureQuality))return false;
     std::uint32_t referenceUncertainty=0,captureUncertainty=0;
     if(!Detail::EncodeClockUncertainty24(response.ReferenceUncertainty,referenceUncertainty)||
        !Detail::EncodeClockUncertainty24(response.CaptureUncertainty,captureUncertainty)||
@@ -156,9 +167,8 @@ inline bool DecodeRadioClockResponseV1(
     std::uint32_t sequence=0;
     if(!Detail::DecodeClockHeader(input,bytes,RadioClockMessageType::Response,sequence))return false;
     const auto reliability=static_cast<Timing::TimeReliability>(input[24]);
-    const auto quality=static_cast<Timing::ClockCaptureQuality>(input[25]);
-    if(!Timing::IsValidTimeReliability(reliability)||quality==Timing::ClockCaptureQuality::Invalid||
-       quality>Timing::ClockCaptureQuality::SoftwareUnbounded)return false;
+    const auto quality=static_cast<RadioClockCaptureQuality>(input[25]);
+    if(!Timing::IsValidTimeReliability(reliability)||!Detail::ValidClockCaptureQuality(quality))return false;
     response.Sequence=sequence;
     response.T2SystemNanoseconds=Detail::ReadClockU64(input+8);
     response.T3SystemNanoseconds=Detail::ReadClockU64(input+16);

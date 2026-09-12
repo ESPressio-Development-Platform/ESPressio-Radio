@@ -27,7 +27,7 @@ int main(){
     response.T2SystemNanoseconds=0x0102030405060708ULL;
     response.T3SystemNanoseconds=0x1112131415161718ULL;
     response.ReferenceReliability=ESPressio::Timing::TimeReliability::Synchronized;
-    response.CaptureQuality=ESPressio::Timing::ClockCaptureQuality::Hardware;
+    response.CaptureQuality=RadioClockCaptureQuality::Hardware;
     response.ReferenceUncertainty=ESPressio::Timing::ClockUncertainty::Known(450'000u);
     response.CaptureUncertainty=ESPressio::Timing::ClockUncertainty::Known(12'345u);
     std::array<std::uint8_t,RadioClockWireV1::ResponseBytes> responseWire{};
@@ -63,17 +63,9 @@ int main(){
     evidence.CaptureModel=model;
     evidence.HasCaptureModel=true;
     assert(evidence.IsCertifiedCandidate());
-    const auto timingCapture=evidence.ToTimingCapture();
-    assert(timingCapture.SystemTimeNanoseconds==1050);
-    assert(timingCapture.MonotonicTimeNanoseconds==150);
-    assert(timingCapture.Uncertainty.IsKnown&&timingCapture.Uncertainty.Nanoseconds==25);
-    assert(timingCapture.Quality==ESPressio::Timing::ClockCaptureQuality::Hardware);
+    assert(evidence.CapturedSystemNanoseconds()==1050);
 
     evidence.HasCaptureModel=false;
     assert(!evidence.IsCertifiedCandidate());
-    const auto unbounded=evidence.ToTimingCapture();
-    assert(unbounded.SystemTimeNanoseconds==0);
-    assert(unbounded.MonotonicTimeNanoseconds==150);
-    assert(!unbounded.Uncertainty.IsKnown);
-    assert(unbounded.Quality==ESPressio::Timing::ClockCaptureQuality::SoftwareUnbounded);
+    assert(evidence.CapturedSystemNanoseconds()==0);
 }
