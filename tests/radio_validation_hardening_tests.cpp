@@ -90,7 +90,13 @@ int main(){
         assert(!DecodeRadioTransportV3Fragment(candidate.data(),encodedBytes,view));
     } // transfer id zero requires both bytes to be zero
     rejectMutation(6,0); // fragment count zero
-    rejectMutation(7,0); rejectMutation(8,0); // logical bytes zero
+    {
+        auto candidate=encoded;
+        candidate[7]=0;
+        candidate[8]=0;
+        RadioTransportV3FragmentView view{};
+        assert(!DecodeRadioTransportV3Fragment(candidate.data(),encodedBytes,view));
+    } // logical payload length zero requires both bytes to be zero
     rejectMutation(9,0); rejectMutation(9,9); // source length
     rejectMutation(10,0); rejectMutation(10,7); // service spoof outside frozen taxonomy
     for(std::size_t i=11;i<15;++i) corrupted[i]=0;
