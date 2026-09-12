@@ -1,0 +1,19 @@
+name: Radio redesign contracts
+
+on:
+  push:
+    branches:
+      - primitives_redesign
+  pull_request:
+
+jobs:
+  foundation-host:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build R7 foundation contracts
+        run: >-
+          g++ -std=c++17 -Wall -Wextra -Werror -fno-rtti -fno-exceptions
+          -Isrc tests/radio_redesign_foundation_tests.cpp -o radio_redesign_foundation_tests
+      - name: Run R7 foundation contracts
+        run: ./radio_redesign_foundation_tests
