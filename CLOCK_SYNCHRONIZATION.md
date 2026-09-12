@@ -1,12 +1,8 @@
 # Radio clock synchronization
 
-`ESPressio-Radio` provides an optional `RadioClockSynchronizer` protocol between a concrete `IRadio` and ESPressio Timing. It does not change the responsibility of either abstraction: concrete Radios still transport opaque link packets, while ESPressio Timing owns offset/delay estimation, filtering, drift learning, synchronization state, and clock discipline.
+`ESPressio-Radio` transports one bounded four-capture Timing exchange over the same managed Radio capacity and contention scheduler as every other service class. Timing owns clock discipline, offset/delay estimation, filtering, drift learning, synchronization state and uncertainty. Radio owns only the physical exchange and the provider evidence needed to construct one valid Timing observation.
 
-Clock synchronization is deliberately **not** a `RadioTransport` logical transfer. Time-critical clock frames are eligible for the independent Radio control lifecycle so ordinary fragmentation, Mesh traffic, Events, State, Commands, and application backlog do not sit in front of T2/T3/T4 processing.
-
-## Four-timestamp exchange
-
-The synchronization exchange preserves the established ESPressio four-timestamp semantics:
+## Four-capture model
 
 ```text
 Client                                      Reference
@@ -18,146 +14,126 @@ T1 request transmit  --------------------->
 T4 response receive
 ```
 
-The completed `Timing::ClockSynchronizationSample` contains T1, T2, T3, and T4 and is submitted to the configured `Timing::IClockSynchronizationTarget`. By default the target is `Timing::SystemClock<>`.
+`RadioClockCoordinator` maintains at most one client exchange and at most one pending reference response. It does not create a worker, polling loop or fixed synchronization cadence.
 
-T1 is captured immediately before the request is handed to `IRadio::Send()`. T3 is captured immediately before the reference response is handed to `IRadio::Send()`.
+The next client campaign comes from `Timing::IClockSynchronizationTarget::NextRequiredSynchronizationMonotonic()`. The coordinator is installed as the optional fixed service extension of the existing `RadioDomainRuntime`, so Clock shares that domain's single T1 execution context.
 
-For receive timestamps, a concrete Radio advertising `RadioCapability::ReceiveTimestamp` must place a timestamp from the active `System::Clock::Monotonic()` nanosecond domain into `RadioPacketView::ReceiveTimestampNanoseconds`, captured as close to physical reception as the driver permits. The synchronizer reconstructs T2/T4 in the Timing target's System Clock domain by subtracting the elapsed monotonic time between the recorded receive instant and control-worker processing time.
+## Same Q1/R3 path
 
-If a provider cannot supply a receive timestamp, the synchronizer can use processing time as a lower-quality fallback when `RequireReceiveTimestamp=false`. Set `RadioClockSynchronizationConfig::RequireReceiveTimestamp=true` for precision-sensitive deployments so initialization fails rather than silently claiming timestamp quality the bearer cannot provide.
+Clock has no privileged queue and never calls a provider around R3.
 
-## Dedicated control lifecycle
+A Clock frame:
 
-The time-critical path is intentionally separate from ordinary `RadioWorker` processing:
+1. reserves ordinary protected Clock Q1 record+byte ownership;
+2. enters the normal `RadioDomainScheduler` Clock queue;
+3. participates in the same weighted DRR / deadline-promotion arbitration as all other classes;
+4. uses the provider's normal cost/readiness contract;
+5. resolves through the normal terminal-result path.
+
+Direct Clock frames intentionally skip RadioTransport-v3 fragmentation because certified synchronization requires one physical frame. This is a wire mode inside the normal R3 scheduler, not a scheduler bypass.
+
+## Late transmit capture
+
+A sealed Clock-frame template remains owned while queued. When R3 selects it, the scheduler copies the template into its fixed physical scratch and invokes a bounded Clock prepare thunk immediately before provider cost/submission.
+
+That late prepare point captures T1 or T3 close to the real physical submission boundary without making retained payload mutable and without introducing another Task.
+
+## Receive evidence and historical System time
+
+A valid precision candidate cannot derive T2/T4 by taking a later System-clock reading and subtracting elapsed monotonic time. The System clock may have changed between capture and service.
+
+`RadioReceiveTimestampEvidence` therefore carries:
+
+- the provider's capture monotonic coordinate;
+- conservative capture uncertainty;
+- timestamp continuity generation;
+- capture source/quality;
+- the Timing clock-model snapshot that was valid at capture time.
+
+Only that capture-time model may map the historical monotonic coordinate into the System-clock domain. Finite uncertainty without a valid capture-time model is not certification-ready.
+
+A provider that cannot establish a finite conservative capture bound may still carry ordinary Radio traffic; it simply cannot be presented as certified Clock evidence.
+
+## Compact Clock wire
+
+Clock magic is distinct from RadioTransport-v3 magic so `RadioIngressRouter` can classify the direct physical frame before ordinary v3 decode/reassembly.
+
+The maximum request size is **17 bytes**. The response is exactly **32 bytes**.
+
+The response preserves:
+
+- exchange sequence/correlation;
+- reference identity/lineage information required by the coordinator;
+- T2 in the reference System-clock domain;
+- exact T2→T3 System duration;
+- exact T2→T3 monotonic duration;
+- reference reliability/uncertainty metadata.
+
+Carrying both durations is intentional. Timing receives genuine remote System and monotonic chronology; the coordinator does not invent a remote monotonic coordinate from the System delta.
+
+## Ingress ownership
+
+Each managed provider has one Radio-owned `IRadioReceiver`: `RadioIngressRouter`.
 
 ```text
-RF / driver receive callback
-        |
-        +--> provider-proximate receive timestamp
-        +--> bounded opaque-payload classification
-        |
-        +--> CONTROL ingress queue
-        |       |
-        |       +--> RadioControlWorker
-        |               |
-        |               +--> IRadioControlProtocol
-        |                        |
-        |                        +--> RadioClockSynchronizer
-        |
-        +--> STANDARD ingress queue
-                |
-                +--> RadioWorker
-                        |
-                        +--> RadioTransport
-                        +--> higher-layer traffic
+provider finite RX storage
+        -> ServiceInbound()
+        -> RadioIngressRouter
+             |-- compact Clock magic -> RadioClockCoordinator
+             `-- ordinary v3         -> bounded RadioReassemblyTable
 ```
 
-`RadioClockSynchronizer` implements `IRadioControlProtocol`:
+There is no `RadioControlWorker`, `IRadioPrioritizedIngress`, packet-observer precision path or competing Clock receiver.
 
-- `MatchesControlFrame(...)` performs only bounded wire recognition suitable for provider callback classification;
-- `ProcessControlPacket(...)` performs request/response work on the control worker;
-- `ServiceControl()` owns synchronization cadence and unanswered-exchange expiry.
+## Correlation and lineage
 
-It is **not** an `IRadioPacketObserver`, and its control frames do not need to enter `RadioTransport` first.
+The client accepts a response only when its sequence/reference lineage matches the one outstanding exchange. Delayed stale responses cannot become current observations.
 
-`RadioControlWorker` is an independent `PrecisionThread`. It is both the generic ingress classifier and the control receiver/work-signal target for providers implementing `IRadioPrioritizedIngress`. The worker drains control ingress first, then services registered protocol cadence/timeouts. A composition can configure a higher thread priority and shorter fallback cadence than the ordinary `RadioWorker`.
+Provider timestamp continuity is also part of the evidence lineage. A continuity-generation change clears source-specific estimator evidence before a new sample can qualify.
 
-Concrete providers remain protocol-agnostic. A Raw80211 provider, for example, does not know clock wire magic; it asks the injected `IRadioIngressClassifier` whether an opaque packet is `Control` or `Standard` and places it in the corresponding bounded queue.
+When a higher topology layer selects a different authenticated reference, that layer supplies the new reference relationship; Timing discipline remains in Timing and the physical exchange remains in Radio.
 
-### Provider requirement for physically separated ingress
+## Terminal send results
 
-The protocol itself remains expressed in terms of `IRadio`, but **physical queue/lifecycle separation requires a provider or adapter that implements `IRadioPrioritizedIngress`**. The current ESP32 Raw80211 concrete does so.
+Clock request/response submissions use normal Radio transfer IDs and terminal results. The coordinator acts as a fixed forwarding sink: it consumes only the transfer IDs it owns and forwards every unrelated terminal result unchanged to the ordinary Radio owner.
 
-A provider without prioritized ingress must not be described as having the same scheduling isolation merely because it can carry the 25/32-byte wire packets. It may support the protocol through another dedicated control-ingress composition, but ordinary `RadioWorker` processing is no longer the built-in precision path.
+A terminal Clock send failure/expiry clears only the matching exchange. It does not reset unrelated Radio work or create infinite retry.
 
-## Why synchronization is link-local
+## Precision qualification
 
-The synchronization response is exactly 32 bytes: an 8-byte control header followed by T1, T2, and T3. The request is 25 bytes and additionally carries the client's opaque `RadioAddress`.
+Sub-millisecond synchronization is a deployment qualification, not a property inferred from MTU size or API names. Qualification must include:
 
-Keeping this protocol link-local avoids `RadioTransport` fragmentation, forwarding, reassembly, and higher-layer route-selection latency contaminating the four-timestamp exchange.
+- finite conservative provider RX capture uncertainty;
+- valid capture-time Timing model evidence;
+- provider TX completion semantics that are not confused with API admission;
+- contention cost good enough for any enabled promotable-deadline claim;
+- Clock deadlines meeting budget under saturated mixed-service traffic;
+- continuity/reference failover behavior;
+- on-target worst-case characterization under realistic coexistence/load.
 
-The embedded requester address is required for Radios such as nRF24 whose receive hardware may not expose the transmitter address. If `RadioPacketView::Source` is available, it must agree with the embedded requester address and takes precedence. If it is unavailable, the reference replies to the embedded address.
+The Radio host suite proves the architecture: Clock uses normal Q1/R3, is promoted under saturated BestEffort load, preserves one-exchange correlation, and feeds Timing complete chronology. It does **not** substitute host tests for physical-provider certification.
 
-The clock wire magic is intentionally distinct from ordinary RadioTransport framing and is recognized only by the registered control protocol classifier.
+### Current providers
 
-## Roles and configuration
+**ESP32 Raw80211**
 
-`RadioClockSynchronizationMode` supports:
+The managed provider uses finite ingress storage and ESP-IDF's raw 802.11 TX-done callback for deferred terminal transmission completion. Its current receive timestamp quality remains `Estimated`; a conservative worst-case capture bound has not yet been certified, so it must not be described as a completed sub-millisecond precision bearer.
 
-- `Disabled`
-- `Client`
-- `Reference`
-- `ClientAndReference`
+**ESP32 BLE legacy advertising**
 
-A client supplies the reference's link-layer `RadioAddress`. `SynchronizationIntervalMilliseconds` controls the cadence owned by `ServiceControl()`; zero disables automatic requests. `AdjustmentMode` is passed unchanged to ESPressio Timing.
+The provider is broadcast-only and exposes 26 opaque physical bytes after removing the redundant carried destination. That is sufficient for ordinary v3 framing but not the exact 32-byte Clock response. It does not advertise Clock-qualified receive timing.
 
-At most one client exchange is outstanding. An explicit request while another is pending returns `RadioSendStatus::Busy`. When a full synchronization interval elapses with an unanswered exchange, periodic control service expires that sequence before issuing the next request. A delayed old response therefore cannot replace or be mis-correlated with a newer exchange.
+**nRF24**
 
-Mesh integrations may select/authenticate the reference relationship and reconfigure the synchronizer accordingly. Mesh does **not** execute synchronization cadence; that remains a Radio control-lifecycle responsibility.
+The provider has a 32-byte physical MTU, synchronous terminal completion and real unicast link ACK evidence. Its current receive timestamp evidence is unbounded/not certified, so MTU compatibility alone does not make it a precision Clock bearer.
 
-## Security boundary
+## Responsibility boundary
 
-Clock synchronization establishes a timing sample, not trust. `RadioClockSynchronizer` does not itself authenticate the reference or payload and must not be interpreted as establishing authenticated time. Systems requiring a trusted time source must establish that trust through the chosen link/Mesh/security architecture independently of Timing's offset/delay calculations.
-
-## Capability and accuracy
-
-Wire compatibility requires a physical payload capacity of at least 32 bytes and usable link addressing. Precision additionally depends on the provider and scheduling path:
-
-- provider-proximate receive timestamps in the common monotonic domain remove worker scheduling delay from T2/T4 reconstruction;
-- physically separate prioritized ingress prevents ordinary packet backlog from delaying clock processing/response generation;
-- providers without receive timestamps can operate only with lower-quality processing-time fallback when allowed;
-- `RequireReceiveTimestamp` rejects that lower-quality configuration.
-
-Current ESP32 Raw80211 advertises `ReceiveTimestamp`, captures/maps the ESP-IDF receive timestamp near the driver boundary, and implements separate bounded Control and Standard queues. This is the current physical-Lab precision bearer.
-
-The current ESP32 legacy-advertising BLE Radio has a 20-byte physical payload ceiling and therefore cannot carry the 32-byte response without a different clock framing strategy; it must not be presented as supporting this exact exchange merely because it is an `IRadio`.
-
-The nRF24 physical MTU is 32 bytes, but scheduling isolation depends on the concrete/provider composition. MTU compatibility alone does not imply `IRadioPrioritizedIngress` support.
-
-## Example: prioritized provider
-
-```cpp
-#include <ESPressio_Radio.hpp>
-
-using namespace ESPressio;
-
-Radio::RadioTransport transport;
-Radio::RadioWorker standardWorker(transport);
-Radio::RadioControlWorker controlWorker({1U, 1U, 4U, -1});
-Radio::RadioClockSynchronizer synchronizer(radio);
-
-// radio must implement IRadioPrioritizedIngress for this physically split path.
-auto& prioritized = static_cast<Radio::IRadioPrioritizedIngress&>(radio);
-
-standardWorker.AddInterface(radio);
-controlWorker.AddInterface(radio, prioritized);
-controlWorker.RegisterProtocol(radio, synchronizer);
-
-Radio::RadioClockSynchronizationConfig config;
-config.Mode = Radio::RadioClockSynchronizationMode::Client;
-config.ReferencePeer = referenceRadioAddress;
-config.SynchronizationIntervalMilliseconds = 1000;
-config.AdjustmentMode = Timing::ClockSynchronizationAdjustmentMode::SlewOnly;
-config.RequireReceiveTimestamp = true;
-
-// Configure the protocol relationship before it can generate client work.
-if (!synchronizer.Initialize(config)) {
-    // configuration/capability failure
-}
-
-controlWorker.Start();
-standardWorker.Start();
-transport.Start();
+```text
+reference selection / trust / topology    -> Mesh or other authenticated topology owner
+physical Clock request/response transport -> ESPressio-Radio
+T1/T2/T3/T4 validation and discipline     -> ESPressio-Timing
+provider timestamp/completion facts       -> concrete IRadio implementation
 ```
 
-In a Mesh composition the relationship is normally configured by the Mesh clock coordinator after an authenticated direct parent is selected. `RadioControlWorker` remains responsible for calling `ServiceControl()` independently of Mesh/application traffic.
-
-Reference nodes use the same synchronizer with `Mode=Reference` and no preconfigured client address.
-
-## Diagnostics
-
-`GetSynchronizationStatus()` forwards the Timing target's current status. `GetStatistics()` provides request/response/send/sample/timestamp-fallback counters.
-
-`RadioControlWorker::GetStatistics()` additionally provides provider-RX-timestamp-to-control-service latency and control-protocol processing-duration statistics. `IRadioPrioritizedIngress` exposes independent Control/Standard accepted/drop/depth/high-water snapshots where the provider implements them.
-
-These aggregate diagnostics are intentionally preferable to synchronous logging inside the time-critical callback/control path.
+No layer may strengthen the evidence supplied by the layer below it.
