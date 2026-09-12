@@ -40,9 +40,24 @@ int main() {
     assert(relative.IsValid() && !relative.SupportsPromotableDeadline());
     assert(airtime.SupportsPromotableDeadline());
 
-    const RadioReceiveTimestampEvidence finite{
-        77, 1000, 250, 3, RadioTimestampCaptureSource::Driver, RadioTimestampQuality::FiniteBounded};
-    assert(finite.HasFiniteBound() && finite.IsCertifiedCandidate());
+    RadioReceiveTimestampEvidence finite{};
+    finite.ProviderCaptureCoordinate = 77;
+    finite.MonotonicNanoseconds = 1000;
+    finite.ConservativeUncertaintyNanoseconds = 250;
+    finite.ContinuityGeneration = 3;
+    finite.Source = RadioTimestampCaptureSource::Driver;
+    finite.Quality = RadioTimestampQuality::FiniteBounded;
+    assert(finite.HasFiniteBound());
+    assert(!finite.IsCertifiedCandidate());
+    assert(finite.CapturedSystemNanoseconds() == 0);
+
+    finite.CaptureModel.AnchorMonotonic = 900;
+    finite.CaptureModel.AnchorTime = 5000;
+    finite.CaptureModel.AnchorUncertainty = ESPressio::Timing::ClockUncertainty::Known(100);
+    finite.HasCaptureModel = true;
+    assert(finite.IsCertifiedCandidate());
+    assert(finite.CapturedSystemNanoseconds() == 5100);
+
     const RadioReceiveTimestampEvidence unknown{};
     assert(!unknown.HasFiniteBound() && !unknown.IsCertifiedCandidate());
 
