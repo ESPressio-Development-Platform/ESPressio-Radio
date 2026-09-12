@@ -17,6 +17,12 @@ jobs:
         run: git clone --depth 1 --branch primitives_redesign https://github.com/ESPressio-Development-Platform/ESPressio-Task.git deps/Task
       - name: Checkout Timing substrate
         run: git clone --depth 1 --branch primitives_redesign https://github.com/ESPressio-Development-Platform/ESPressio-Timing.git deps/Timing
+      - name: Compile canonical Radio umbrella without predecessor dependencies
+        run: >-
+          g++ -std=c++17 -Wall -Wextra -Werror -fno-rtti
+          -Isrc -Ideps/System/src -Ideps/Task/src -Ideps/Timing/src tests/radio_canonical_umbrella_tests.cpp -o radio_canonical_umbrella_tests -pthread
+      - name: Run canonical Radio umbrella contract
+        run: ./radio_canonical_umbrella_tests
       - name: Build R7 foundation contracts without RTTI/exceptions
         run: >-
           g++ -std=c++17 -Wall -Wextra -Werror -fno-rtti -fno-exceptions
@@ -47,6 +53,12 @@ jobs:
           -Isrc -Ideps/System/src -Ideps/Timing/src tests/radio_reassembly_redesign_tests.cpp -o radio_reassembly_redesign_tests -pthread
       - name: Run bounded v3 reassembly contracts
         run: ./radio_reassembly_redesign_tests
+      - name: Build single-owner ingress router contracts
+        run: >-
+          g++ -std=c++17 -Wall -Wextra -Werror -fno-rtti
+          -Isrc -Ideps/System/src -Ideps/Timing/src tests/radio_ingress_router_tests.cpp -o radio_ingress_router_tests -pthread
+      - name: Run single-owner ingress router contracts
+        run: ./radio_ingress_router_tests
       - name: Build R3 scheduler contracts
         run: >-
           g++ -std=c++17 -Wall -Wextra -Werror -fno-rtti

@@ -83,11 +83,25 @@ public:
     std::atomic<unsigned> ServiceCount{0};
     std::atomic<unsigned> InboundCount{0};
     std::atomic<unsigned> ShutdownCount{0};
+    std::atomic<std::uint64_t> Deadline{0};
     RadioSchedulerStatus Initialize(IRadioTransferResultSink*,RadioSchedulerWakeTarget wake={}) noexcept{_wake=wake;return RadioSchedulerStatus::Success;}
     ManagedRadioIngressServiceResult ServiceOneInboundProvider(std::size_t=0) noexcept{++InboundCount;return {};}
-    RadioSchedulerServiceResult Service(std::uint64_t) noexcept{++ServiceCount;return {RadioSchedulerStatus::Success,false,0};}
+    RadioSchedulerServiceResult Service(std::uint64_t) noexcept{++ServiceCount;return {RadioSchedulerStatus::Success,false,Deadline.load()};}
     RadioSchedulerStatus Shutdown() noexcept{++ShutdownCount;return RadioSchedulerStatus::Success;}
     void TriggerWake() noexcept{assert(_wake.Wake);_wake.Wake(_wake.Context);}
+};
+
+class FakeExtension final : public IRadioDomainServiceExtension {
+    RadioDomainServiceWakeTarget _wake{};
+public:
+    std::atomic<unsigned> ServiceCount{0};
+    std::atomic<std::uint64_t> Deadline{0};
+    void SetDomainWakeTarget(RadioDomainServiceWakeTarget target) noexcept override{_wake=target;}
+    RadioDomainExtensionServiceResult ServiceDomain(std::uint64_t) noexcept override{
+        ++ServiceCount;return {false,Deadline.load(std::memory_order_acquire)};
+    }
+    void TriggerWake() noexcept{assert(_wake.Wake);_wake.Wake(_wake.Context);}
+    bool IsBound()const noexcept{return _wake.Wake!=nullptr;}
 };
 
 static void WaitFor(const std::atomic<unsigned>& value,unsigned expected){
@@ -103,18 +117,27 @@ int main(){
     System::Synchronization::SetProvider(&synchronization);
     HostExecution execution;
     FakeScheduler scheduler;
+    FakeExtension extension;
+    scheduler.Deadline.store(9'000'000'000ULL);
+    extension.Deadline.store(7'000'000'000ULL);
     RadioDomainRuntime<FakeScheduler> runtime(scheduler,execution);
+    assert(runtime.BindServiceExtension(&extension)==RadioDomainRuntimeStatus::Success);
     assert(runtime.Initialize(nullptr)==RadioDomainRuntimeStatus::Success);
+    assert(extension.IsBound());
+    assert(runtime.BindServiceExtension(nullptr)==RadioDomainRuntimeStatus::AlreadyInitialized);
     assert(runtime.Start()==RadioDomainRuntimeStatus::Success);
     WaitFor(scheduler.ServiceCount,1);
+    WaitFor(extension.ServiceCount,1);
+    assert(runtime.EarliestDeadlineNanoseconds()==7'000'000'000ULL);
     const auto first=scheduler.ServiceCount.load();
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
     assert(scheduler.ServiceCount.load()==first); // genuinely blocked: no fixed polling cadence
-    scheduler.TriggerWake();
+    extension.TriggerWake();
     WaitFor(scheduler.ServiceCount,first+1);
     assert(runtime.IsRunning());
     assert(runtime.Shutdown()==RadioDomainRuntimeStatus::Success);
     assert(!runtime.IsRunning());
+    assert(!extension.IsBound());
     assert(scheduler.ShutdownCount==1);
     System::Synchronization::ResetProvider();
     return 0;
