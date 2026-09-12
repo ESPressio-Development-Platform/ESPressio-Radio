@@ -71,6 +71,12 @@ jobs:
           -Isrc -Ideps/System/src -Ideps/Timing/src tests/radio_reassembly_redesign_tests.cpp -o radio_reassembly_redesign_tests -pthread
       - name: Run bounded v3 reassembly contracts
         run: ./radio_reassembly_redesign_tests
+      - name: Build adversarial wire/quarantine/saturation validation
+        run: >-
+          g++ -std=c++17 -Wall -Wextra -Werror -fno-rtti
+          -Isrc -Ideps/System/src -Ideps/Timing/src tests/radio_validation_hardening_tests.cpp -o radio_validation_hardening_tests -pthread
+      - name: Run adversarial wire/quarantine/saturation validation
+        run: ./radio_validation_hardening_tests
       - name: Build single-owner ingress router contracts
         run: >-
           g++ -std=c++17 -Wall -Wextra -Werror -fno-rtti
