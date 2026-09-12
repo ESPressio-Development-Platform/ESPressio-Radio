@@ -15,7 +15,7 @@ using Domain=RadioStaticCapacityDomain<256,8,Arena>;
 using Inbound=RadioCapacityPlane<RadioCapacityDirection::Inbound,
     Domain,Domain,Domain,Domain,Domain,Domain,Domain,Domain>;
 using Outbound=RadioCapacityPlane<RadioCapacityDirection::Outbound,
-    Domain,Domain,Domain,Domain,Domain,Domain,Domain>;
+    Domain,Domain,Domain,Domain,Domain,Domain,Domain,Domain>;
 using Table=RadioReassemblyTable<Inbound,8,8>;
 using Profile=RadioSchedulerProfile<32,32,32,32,32,32,128,25'000>;
 using Scheduler=RadioDomainScheduler<Outbound,Profile,8,16,1,64>;
@@ -82,7 +82,13 @@ int main(){
         assert(!DecodeRadioTransportV3Fragment(candidate.data(),encodedBytes,view));
     };
     rejectMutation(0,0); rejectMutation(1,0); rejectMutation(2,2);
-    rejectMutation(3,0); rejectMutation(4,0); // transfer id zero
+    {
+        auto candidate=encoded;
+        candidate[3]=0;
+        candidate[4]=0;
+        RadioTransportV3FragmentView view{};
+        assert(!DecodeRadioTransportV3Fragment(candidate.data(),encodedBytes,view));
+    } // transfer id zero requires both bytes to be zero
     rejectMutation(6,0); // fragment count zero
     rejectMutation(7,0); rejectMutation(8,0); // logical bytes zero
     rejectMutation(9,0); rejectMutation(9,9); // source length
