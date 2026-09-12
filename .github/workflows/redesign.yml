@@ -11,6 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Enforce final Radio dependency and predecessor-eradication guard
+        run: python3 tests/radio_dependency_guard.py
       - name: Checkout System substrate
         run: git clone --depth 1 --branch primitives_redesign https://github.com/ESPressio-Development-Platform/ESPressio-System.git deps/System
       - name: Checkout Task substrate

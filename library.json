@@ -1,7 +1,7 @@
 {
   "name": "ESPressio-Radio",
   "description": "Hardware-agnostic packet-radio onward transport for ESPressio messages",
-  "keywords": "espressio,radio,transport,packet,routing,fragmentation,reassembly,observable,observer,event,bridge,thread,worker,clock,synchronization",
+  "keywords": "espressio,radio,transport,packet,routing,fragmentation,reassembly,task,clock,synchronization",
   "authors": {"name":"Simon J. Stuart","maintainer":true,"url":"https://espressio.org"},
   "build": {"flags":["-std=gnu++17","-DESPRESSIO_RADIO"]},
   "repository": {"type":"git","url":"https://github.com/ESPressio-Development-Platform/ESPressio-Radio.git"},
@@ -16,13 +16,8 @@
       "platforms":"*"
     },
     {
-      "name":"ESPressio-Units",
-      "version":"https://github.com/ESPressio-Development-Platform/ESPressio-Units.git#primitives_redesign",
-      "platforms":"*"
-    },
-    {
-      "name":"ESPressio-Observable",
-      "version":"https://github.com/ESPressio-Development-Platform/ESPressio-Observable.git#primitives_redesign",
+      "name":"ESPressio-Task",
+      "version":"https://github.com/ESPressio-Development-Platform/ESPressio-Task.git#primitives_redesign",
       "platforms":"*"
     },
     {
@@ -31,14 +26,9 @@
       "platforms":"*"
     },
     {
-      "name":"ESPressio-Threads",
-      "version":"https://github.com/ESPressio-Development-Platform/ESPressio-Threads.git#primitives_redesign",
-      "platforms":"espressif32"
-    },
-    {
-      "name":"ESPressio-Event",
-      "version":"https://github.com/ESPressio-Development-Platform/ESPressio-Event.git#primitives_redesign",
-      "platforms":"espressif32"
+      "name":"ESPressio-Units",
+      "version":"https://github.com/ESPressio-Development-Platform/ESPressio-Units.git#primitives_redesign",
+      "platforms":"*"
     }
   ]
 }

@@ -15,7 +15,3 @@
 #include "ESPressio_RadioIngressRouter.hpp"
 #include "ESPressio_RadioClockCoordinator.hpp"
 #include "ESPressio_RadioRuntime.hpp"
-
-// Predecessor observer/control/worker surfaces remain temporarily source-addressable during Tranche 7 migration,
-// but are intentionally no longer part of the canonical umbrella. R7-19..R7-21 delete them after the replacement
-// runtime/Clock orchestration and provider migrations are validated.
