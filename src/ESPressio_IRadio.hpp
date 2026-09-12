@@ -3,58 +3,32 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "ESPressio_RadioProviderContract.hpp"
 #include "ESPressio_RadioTypes.hpp"
-#include "ESPressio_RadioObservers.hpp"
 
 namespace ESPressio::Radio {
 
 class IRadio;
 
-/// <summary>Receives complete link-layer packets from a concrete radio provider.</summary>
-/// <remarks>
-/// The packet payload is borrowed and is valid only for the duration of the callback. RadioWorker installs itself as
-/// the receiver so link callbacks/driver queues are serviced on the ESPressio worker thread before RadioTransport sees them.
-/// </remarks>
-
+/// <summary>Receives one borrowed physical/link packet from a managed provider service quantum.</summary>
+/// <remarks>The payload and timestamp evidence are valid only for the callback. This sink is owned by Radio Runtime;
+/// providers never invoke Primitive-family or arbitrary application callbacks directly.</remarks>
 class IRadioReceiver {
 public:
     virtual ~IRadioReceiver() = default;
-    virtual void OnRadioPacket(IRadio& radio, const RadioPacketView& packet) = 0;
+    virtual void OnRadioPacket(
+        IRadio& radio,
+        const RadioPacketView& packet,
+        const RadioReceiveTimestampEvidence& timestamp) noexcept = 0;
 };
 
-/// <summary>Receives a lightweight task-context signal that a radio has queued inbound work.</summary>
+/// <summary>Hardware-neutral managed physical-radio provider contract used by the R3 domain scheduler.</summary>
 /// <remarks>
-/// A concrete provider may invoke this after placing data in bounded provider-owned storage when already running in a
-/// task/driver-callback context that may safely wake an ESPressio worker. A hardware ISR must not invoke this contract
-/// directly; ISR-backed providers must defer the wake into an ISR-safe handoff/task context first. The signal itself
-/// must remain non-blocking and must never perform packet parsing, routing, authentication, or Foundation-Type work.
+/// Implementations transport opaque bytes only. Every provider exposes finite ingress service, one non-zero physical
+/// contention-domain identity, a finite positive R2 transmission cost, and terminal TransmissionCompletion either
+/// synchronously or through one generation-safe deferred handle. The runtime sink is fixed/non-owning and may only wake
+/// Radio infrastructure. No compatibility drain-until-empty or Observable callback surface exists in this contract.
 /// </remarks>
-
-class IRadioWorkSignal {
-public:
-    virtual ~IRadioWorkSignal() = default;
-    virtual void OnRadioWorkAvailable(IRadio& radio) noexcept = 0;
-};
-
-/// <summary>Result of one bounded provider-ingress service quantum.</summary>
-/// <remarks>
-/// WorkRemaining describes provider-owned ingress that was already queued when the service quantum completed. It lets
-/// a worker schedule a continuation without requiring a provider to spin until empty. PacketsProcessed is diagnostic
-/// evidence only and need not equal the number of native frames inspected by a provider.
-/// </remarks>
-
-struct RadioIngressServiceResult final {
-    std::uint32_t PacketsProcessed{0U};
-    bool WorkRemaining{false};
-};
-
-/// <summary>Hardware-neutral bounded-packet radio contract.</summary>
-/// <remarks>
-/// Implementations transport opaque bytes only. They do not understand ESPressio primitives, application routing,
-/// authentication, serialization, or message semantics. Inbound processing is owned by RadioWorker: providers queue
-/// callback-driven traffic where necessary and expose that queued/hardware traffic only through the worker service API.
-/// </remarks>
-
 class IRadio {
 public:
     virtual ~IRadio() = default;
@@ -65,41 +39,40 @@ public:
 
     virtual RadioCapabilities Capabilities() const noexcept = 0;
     virtual RadioAddress LocalAddress() const noexcept = 0;
+    virtual RadioContentionDomainId ContentionDomain() const noexcept = 0;
+    virtual RadioProviderResourceProfile ProviderResources() const noexcept = 0;
 
-    virtual RadioSendResult Send(
+    /// <summary>True only when a non-blocking physical submission may currently be attempted.</summary>
+    virtual bool IsTransmitReady() const noexcept = 0;
+
+    /// <summary>Returns a finite non-zero R2 cost for one candidate physical packet.</summary>
+    virtual RadioTransmissionCost EstimateTransmissionCost(
         const RadioAddress& destination,
-        const uint8_t* payload,
-        std::size_t payloadSize
-    ) = 0;
-
-    /// <summary>Installs the worker-owned inbound packet receiver.</summary>
-    virtual void SetReceiver(IRadioReceiver* receiver) noexcept = 0;
-
-    /// <summary>Installs the task-context worker wake target used when asynchronous driver callbacks queue inbound work.</summary>
-    virtual void SetWorkSignal(IRadioWorkSignal* signal) noexcept = 0;
+        std::size_t payloadBytes,
+        const RadioServiceProfile& profile) const noexcept = 0;
 
     /// <summary>
-    /// Legacy provider ingress hook. New queued providers should override ServiceInbound() with a bounded service quantum.
-    /// </summary>
-    virtual void DrainInbound() = 0;
-
-    /// <summary>
-    /// Services at most <paramref name="maximumPackets"/> queued inbound packets and reports whether work remains.
+    /// Attempts one non-blocking physical packet submission.
     /// </summary>
     /// <remarks>
-    /// This is an internal RadioWorker operation, not an application polling API. The default compatibility path calls
-    /// DrainInbound() once for providers that pre-date bounded ingress service. Queue-backed providers should override
-    /// this method so one worker invocation can never become an unbounded drain-until-empty loop. A value of zero asks
-    /// the provider to use its own finite service quantum; it never means unbounded work.
+    /// Accepted must either carry terminal TransmissionCompletion evidence or a valid DeferredTransmission handle which
+    /// is resolved exactly once through IRadioRuntimeSink::TransmissionResolved(). Link acknowledgement is reported only
+    /// where the physical technology actually proves it.
     /// </remarks>
-    virtual RadioIngressServiceResult ServiceInbound(std::size_t maximumPackets = 0U) {
-        (void)maximumPackets;
-        DrainInbound();
-        return {};
-    }
+    virtual RadioSendResult Send(
+        const RadioAddress& destination,
+        const std::uint8_t* payload,
+        std::size_t payloadSize) noexcept = 0;
 
-    /// <summary>Gets the ESPressio Observable callback-subscription surface for this radio.</summary>
-    virtual RadioObserverSubscriptions& Observers() noexcept = 0;
+    /// <summary>Installs the Radio-owned packet sink used only from finite provider service quanta.</summary>
+    virtual void SetReceiver(IRadioReceiver* receiver) noexcept = 0;
+
+    /// <summary>Installs the fixed non-owning infrastructure wake/completion sink.</summary>
+    virtual void SetRuntimeSink(IRadioRuntimeSink* sink) noexcept = 0;
+
+    /// <summary>Services at most a finite provider-defined/requested number of queued inbound packets.</summary>
+    /// <remarks>A zero maximum asks the provider to use its own declared finite quantum; zero never means unbounded.</remarks>
+    virtual ManagedRadioIngressServiceResult ServiceInbound(std::size_t maximumPackets = 0U) noexcept = 0;
 };
 
 } // namespace ESPressio::Radio
