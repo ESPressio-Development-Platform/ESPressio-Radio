@@ -15,39 +15,47 @@ jobs:
         run: git clone --depth 1 --branch primitives_redesign https://github.com/ESPressio-Development-Platform/ESPressio-System.git deps/System
       - name: Checkout Task substrate
         run: git clone --depth 1 --branch primitives_redesign https://github.com/ESPressio-Development-Platform/ESPressio-Task.git deps/Task
+      - name: Checkout Timing substrate
+        run: git clone --depth 1 --branch primitives_redesign https://github.com/ESPressio-Development-Platform/ESPressio-Timing.git deps/Timing
       - name: Build R7 foundation contracts without RTTI/exceptions
         run: >-
           g++ -std=c++17 -Wall -Wextra -Werror -fno-rtti -fno-exceptions
-          -Isrc tests/radio_redesign_foundation_tests.cpp -o radio_redesign_foundation_tests
+          -Isrc -Ideps/Timing/src tests/radio_redesign_foundation_tests.cpp -o radio_redesign_foundation_tests
       - name: Run R7 foundation contracts
         run: ./radio_redesign_foundation_tests
       - name: Build managed provider contract without RTTI/exceptions
         run: >-
           g++ -std=c++17 -Wall -Wextra -Werror -fno-rtti -fno-exceptions
-          -Isrc tests/radio_managed_provider_contract_tests.cpp -o radio_managed_provider_contract_tests
+          -Isrc -Ideps/Timing/src tests/radio_managed_provider_contract_tests.cpp -o radio_managed_provider_contract_tests
       - name: Run managed provider contract
         run: ./radio_managed_provider_contract_tests
+      - name: Build compact Clock wire/capture contracts without RTTI/exceptions
+        run: >-
+          g++ -std=c++17 -Wall -Wextra -Werror -fno-rtti -fno-exceptions
+          -Isrc -Ideps/Timing/src tests/radio_clock_wire_v1_tests.cpp -o radio_clock_wire_v1_tests
+      - name: Run compact Clock wire/capture contracts
+        run: ./radio_clock_wire_v1_tests
       - name: Build System-backed Radio-local Q1 capacity contracts
         run: >-
           g++ -std=c++17 -Wall -Wextra -Werror -fno-rtti
-          -Isrc -Ideps/System/src tests/radio_capacity_redesign_tests.cpp -o radio_capacity_redesign_tests -pthread
+          -Isrc -Ideps/System/src -Ideps/Timing/src tests/radio_capacity_redesign_tests.cpp -o radio_capacity_redesign_tests -pthread
       - name: Run Radio-local Q1 capacity contracts
         run: ./radio_capacity_redesign_tests
       - name: Build bounded v3 reassembly contracts
         run: >-
           g++ -std=c++17 -Wall -Wextra -Werror -fno-rtti
-          -Isrc -Ideps/System/src tests/radio_reassembly_redesign_tests.cpp -o radio_reassembly_redesign_tests -pthread
+          -Isrc -Ideps/System/src -Ideps/Timing/src tests/radio_reassembly_redesign_tests.cpp -o radio_reassembly_redesign_tests -pthread
       - name: Run bounded v3 reassembly contracts
         run: ./radio_reassembly_redesign_tests
       - name: Build R3 scheduler contracts
         run: >-
           g++ -std=c++17 -Wall -Wextra -Werror -fno-rtti
-          -Isrc -Ideps/System/src tests/radio_scheduler_redesign_tests.cpp -o radio_scheduler_redesign_tests -pthread
+          -Isrc -Ideps/System/src -Ideps/Timing/src tests/radio_scheduler_redesign_tests.cpp -o radio_scheduler_redesign_tests -pthread
       - name: Run R3 scheduler contracts
         run: ./radio_scheduler_redesign_tests
       - name: Build cooperative domain runtime contracts
         run: >-
           g++ -std=c++17 -Wall -Wextra -Werror -fno-rtti
-          -Isrc -Ideps/System/src -Ideps/Task/src tests/radio_domain_runtime_tests.cpp -o radio_domain_runtime_tests -pthread
+          -Isrc -Ideps/System/src -Ideps/Task/src -Ideps/Timing/src tests/radio_domain_runtime_tests.cpp -o radio_domain_runtime_tests -pthread
       - name: Run cooperative domain runtime contracts
         run: ./radio_domain_runtime_tests
