@@ -13,6 +13,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Checkout System substrate
         run: git clone --depth 1 --branch primitives_redesign https://github.com/ESPressio-Development-Platform/ESPressio-System.git deps/System
+      - name: Checkout Task substrate
+        run: git clone --depth 1 --branch primitives_redesign https://github.com/ESPressio-Development-Platform/ESPressio-Task.git deps/Task
       - name: Build R7 foundation contracts without RTTI/exceptions
         run: >-
           g++ -std=c++17 -Wall -Wextra -Werror -fno-rtti -fno-exceptions
@@ -43,3 +45,9 @@ jobs:
           -Isrc -Ideps/System/src tests/radio_scheduler_redesign_tests.cpp -o radio_scheduler_redesign_tests -pthread
       - name: Run R3 scheduler contracts
         run: ./radio_scheduler_redesign_tests
+      - name: Build cooperative domain runtime contracts
+        run: >-
+          g++ -std=c++17 -Wall -Wextra -Werror -fno-rtti
+          -Isrc -Ideps/System/src -Ideps/Task/src tests/radio_domain_runtime_tests.cpp -o radio_domain_runtime_tests -pthread
+      - name: Run cooperative domain runtime contracts
+        run: ./radio_domain_runtime_tests
