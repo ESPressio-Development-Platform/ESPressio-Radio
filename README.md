@@ -1,229 +1,168 @@
 # ESPressio-Radio
 
-`ESPressio-Radio` provides the hardware-agnostic physical/link transport boundary used by ESPressio.
+`ESPressio-Radio` is the hardware-neutral physical/link transport layer for ESPressio. It owns bounded physical-provider integration, hop-local v3 fragmentation/reassembly, contention-domain scheduling, Clock transport, generation-safe direct-peer handles, and the family-opaque logical-transfer runtime consumed by higher layers.
 
-Its responsibility is deliberately narrow: concrete `IRadio` implementations move bounded opaque physical packets to and from `RadioAddress` endpoints, while `RadioTransport` provides bounded **hop-local logical transfer** by fragmenting/reassembling complete opaque byte sequences over one explicitly selected radio interface and next-hop address. Radio owns no Mesh membership, topology, route selection, forwarding policy, device identity, authentication, Command/Event/State semantics, or application protocol meaning.
+Radio does **not** own Mesh membership, routing, authentication, Primitive family semantics, Command/Event/State policy, or application protocol meaning.
 
-## Responsibility boundary
+## Final architecture
 
-Outbound:
-
-```text
-higher layer (for example ESPressio-Mesh)
-        -> selects one IRadio + next-hop RadioPeerHandle/RadioAddress
-        -> RadioTransport bounded logical transfer
-        -> IRadio physical/link send
-        -> RF medium
-```
-
-Ordinary inbound traffic:
+The canonical outbound path is:
 
 ```text
-RF medium
-        -> IRadio concrete bounded RX storage / hardware FIFO
-        -> RadioWorker (PrecisionThread)
-        -> RadioTransport bounded reassembly
-        -> higher-layer receiver
+family / RadioAdapter / Mesh
+        -> RadioRuntime logical transfer submission
+        -> RadioDomainScheduler (R3)
+        -> one managed IRadio provider
+        -> physical bearer
 ```
 
-Latency-critical Radio-owned control traffic may instead use a provider's physically separate prioritized ingress:
+The canonical inbound path is:
 
 ```text
-RF / driver callback
-        -> generic opaque-payload classification
-        -> CONTROL provider queue
-        -> RadioControlWorker (independent PrecisionThread)
-        -> registered IRadioControlProtocol
+physical bearer
+        -> managed IRadio finite ingress storage
+        -> RadioIngressRouter (single IRadioReceiver owner)
+        -> Clock direct-frame classification OR RadioTransport-v3 reassembly
+        -> RadioRuntime ready handle / TakeInbound()
+        -> higher layer
 ```
 
-The current `RadioClockSynchronizer` uses this control lifecycle. It no longer waits behind ordinary `RadioTransport` traffic when the provider implements `IRadioPrioritizedIngress`.
+There is no predecessor `RadioWorker`, `RadioControlWorker`, `PrecisionThread`, Event bridge, Observable callback architecture, or monolithic v2 `RadioTransport` in the canonical branch.
 
-A concrete `IRadio` knows only how to start/stop its technology, report its capabilities, expose its local `RadioAddress`, send bounded opaque physical/link bytes to another `RadioAddress`, and drain inbound physical packets into the worker-owned receiver. It must not parse ESPressio Mesh or conceptual primitives. A concrete implementing `IRadioPrioritizedIngress` still remains protocol-agnostic: it asks the injected classifier whether opaque bytes are `Standard` or `Control` rather than learning clock or Mesh semantics itself.
+## Managed provider contract
 
-## Send admission and direct-link evidence
+Concrete bearers implement `IRadio`. A managed provider exposes:
 
-Radio deliberately distinguishes **submission/admission** from facts a technology can actually prove about the physical/link transmission.
+- finite start/stop lifecycle;
+- local opaque `RadioAddress`;
+- one `RadioContentionDomainId`;
+- physical payload and logical-transfer capability facts;
+- deterministic provider resource profile;
+- readiness through `IsTransmitReady()` plus runtime wake notification;
+- conservative transmission cost when promotable deadlines are supported;
+- synchronous or deferred terminal transmission evidence;
+- bounded `ServiceInbound()` quanta;
+- optional capture-time receive timestamp evidence.
 
-`IRadio::Send()` returns `RadioSendResult`. `RadioSendStatus::Accepted` means the provider accepted the packet send operation. It does **not** by itself mean that RF transmission completed and does not mean that a peer acknowledged the packet.
+`Send()` admission is not automatically transmission completion. Deferred providers return a generation/correlation-safe `RadioTransmissionHandle` and later resolve it through the installed `IRadioRuntimeSink`. Providers must never claim peer acknowledgement or timing quality they cannot prove.
 
-Stronger facts, when genuinely available, are carried separately in `RadioSendResult::Evidence`:
+## Service classes and R3 arbitration
 
-- `RadioTransmissionCompletion::Unknown` — the provider cannot prove completion at `Send()` return time;
-- `RadioTransmissionCompletion::Completed` — the provider can prove the physical/link transmission completed;
-- `RadioPeerAcknowledgement::Unavailable` — that bearer/operation has no qualifying peer acknowledgement;
-- `RadioPeerAcknowledgement::Unknown` — acknowledgement state is not established;
-- `RadioPeerAcknowledgement::Acknowledged` — the provider can prove a qualifying link-layer peer acknowledgement.
+Radio uses the frozen six-class service taxonomy:
 
-For example, the current nRF24 concrete uses synchronous `RF24::write()` evidence: successful unicast can report transmission completed + peer acknowledged, while broadcast can report transmission completed without peer acknowledgement. ESP32 Raw80211 currently reports only submission acceptance because `esp_wifi_80211_tx()` returning success does not establish a qualifying peer acknowledgement. The BLE legacy-advertising concrete queues asynchronous advertising work and likewise reports only immediate submission acceptance.
+1. Infrastructure
+2. Clock
+3. Critical
+4. Responsive
+5. Convergent
+6. BestEffort
 
-These are **Radio/link facts only**. Even `Completed + Acknowledged` is not an ESPressio-Mesh delivery acknowledgement and does not prove that a peer Mesh stack authenticated, validated, accepted or forwarded a Mesh message.
+Every physical transmission in one contention domain passes through the same `RadioDomainScheduler`. R3 combines finite per-class FIFO queues, weighted deficit round-robin accounting, bounded promotable-deadline debt, provider-reported cost and one scheduler-owned outstanding physical operation.
 
-`RadioTransportSendResult` applies the same distinction to a complete logical transfer. A fragmented transfer reports `TransmissionCompleted` only when every fragment synchronously established completion, and reports `PeerAcknowledged` only when every fragment established acknowledgement. Otherwise `Accepted` remains admission of the complete fragment set, not logical Mesh delivery.
+Clock does **not** own a privileged worker or bypass queue. A Clock record uses the normal Clock Q1 capacity and normal R3 arbitration. Its direct physical frame may skip v3 fragmentation, but still uses the same scheduler, provider-cost model, completion correlation and contention-domain execution context.
 
-## RadioTransport: direct-link logical transfer only
+## Radio-local Q1 capacity
 
-`RadioTransport` does **not** contain a logical-node routing table and does **not** forward traffic. Every outbound operation resolves to one exact direct Radio peer. The preferred higher-layer path uses a generation-safe `RadioPeerHandle`:
+Inbound and outbound capacity are fixed compile-time planes built from complete record + byte ownership domains. Protected per-class capacity is isolated from `SharedOverflow`; untrusted ingress has a physically separate inbound quarantine domain.
 
-```cpp
-transport.Send(peerHandle, bytes, size);
-```
+A logical transfer becomes visible only after its record and byte lease are complete and committed. No hidden heap fallback or unbounded queue exists in the Radio hot path.
 
-The lower Radio-facing overload remains available for Radio-layer composition and takes the exact interface/address pair:
+`ESPressio_RadioResources.hpp` exposes deterministic target-specific accounting for configured capacity planes, scheduler/runtime objects, queue topology, worker stack configuration, provider slots and provider-hidden resource declarations. Component values that overlap aggregate `sizeof` values are reported separately rather than summed misleadingly.
 
-```cpp
-transport.Send(radio, peerRadioAddress, bytes, size);
-```
+## RadioTransport v3 wire
 
-The service owns only:
+Ordinary hop-local logical transfers use v3 framing. The fixed portion is 15 bytes, followed by the Radio source address and fragment payload.
 
-- bounded hop-local fragmentation and reassembly;
-- one finite `MaximumLogicalTransferSize(radio)` per interface;
-- a bounded set of registered radio interfaces;
-- generation-safe bounded direct-peer bindings;
-- bounded incomplete-reassembly state;
-- bounded recently-completed transfer suppression; and
-- delivery of one complete opaque logical byte sequence to `IRadioTransportReceiver`.
+The header carries:
 
-This is the architectural boundary required by ESPressio-Mesh: Mesh owns end-to-end routing, retries, forwarding, identities, hop limits and delivery semantics; Radio executes only the selected direct link.
+- wire magic and version;
+- Radio-local transfer id;
+- fragment index/count;
+- complete logical payload length;
+- opaque source Radio address;
+- service class;
+- remaining residence in milliseconds.
 
-The default generic logical-transfer ceiling is 4096 bytes and is compile-time bounded by `ESPRESSIO_RADIO_MAX_LOGICAL_TRANSFER_BYTES`. A concrete provider can advertise a smaller `RadioCapabilities::MaximumLogicalTransferBytes`. The effective capability is also constrained by its physical MTU and the maximum 255-fragment Radio transfer framing.
+Remaining residence is finite and non-increasing. Reassembly is bounded, duplicate-aware and generation-safe. Untrusted completed traffic remains quarantined until a higher trust layer validates it and calls promotion with the **same** service class carried by the authenticated transfer. A service-class mismatch is malformed and cannot self-promote into protected capacity.
 
-Each RadioTransport fragment carries the sending `RadioAddress` inside the Radio-owned framing. This is intentional: technologies such as nRF24 do not expose the transmitter address when receiving a packet. When a concrete driver *does* provide `RadioPacketView::Source`, RadioTransport verifies that it agrees with the framed Radio source. This link endpoint remains strictly separate from `System::DeviceIdentifier` and every Mesh identity.
+The exact maximum logical payload is derived from physical MTU, source-address width and the 255-fragment limit. For example, a 32-byte nRF24 frame with a five-byte source supports 3060 logical bytes under v3.
 
-## RadioPeerHandle
+## Family-opaque RadioRuntime
 
-`RadioPeerHandle` is a compact generation-safe process-local capability issued by `RadioPeerRegistry`. It resolves only inside the owning Radio service to one `IRadio* + RadioAddress` binding.
+`RadioRuntime` is the stable handoff consumed by RadioAdapters/MeshAdapters. It owns no Event/Command/State knowledge.
 
-A peer handle is never a `DeviceIdentifier`, membership identity, route authority or distributed value. Slot reuse advances its generation so a stale handle cannot resolve to a replacement peer. Explicit invalidation, interface removal and transport shutdown invalidate matching peer handles and emit peer-lifecycle observations before the binding disappears.
+It provides:
 
-Higher layers may associate an authenticated identity with a current peer handle in their own bounded state, but Radio never constructs or interprets that identity.
+- fixed domain/provider registration;
+- generation-safe direct peers;
+- outbound submission by direct peer;
+- terminal logical-transfer results;
+- inbound ready handles;
+- explicit `TakeInbound()` ownership transfer;
+- quarantine promotion;
+- controlled shutdown and volatile-generation invalidation.
 
-## RadioWorker and RadioControlWorker
+Higher layers map this neutral boundary into A2/family semantics. Radio never performs that mapping itself.
 
-Ordinary inbound processing is owned by `RadioWorker`, which derives from ESPressio `PrecisionThread`.
+## Clock synchronization
 
-`RadioWorker` does three things for **standard** ingress:
+Clock synchronization is implemented by `RadioClockCoordinator` plus compact direct Clock frames. It uses Timing's adaptive `NextRequiredSynchronizationMonotonic()` deadline rather than a fixed periodic worker.
 
-1. service attached `IRadio` providers for available standard physical/link packets;
-2. advance each packet into `RadioTransport`; and
-3. notify supplemental physical-packet observers after RadioTransport has consumed the borrowed packet view.
+The four-capture model remains T1/T2/T3/T4. T1/T3 are late-captured immediately before the normal R3 provider send. T2/T4 are accepted only from provider receive evidence whose capture-time Timing model can map the historical monotonic coordinate into System time without reconstructing it from a later mutable clock.
 
-It does not authenticate/decrypt messages, resolve routes, forward Mesh traffic, or inspect Command, Event, State or another conceptual primitive family.
+The compact request is at most 17 bytes and the response is exactly 32 bytes. The response preserves both remote System and remote monotonic T2→T3 chronology so Timing receives genuine four-capture ordering rather than fabricated coordinates.
 
-`RadioControlWorker` is a separate `PrecisionThread` for bounded latency-critical Radio-owned protocols. It implements the generic `IRadioIngressClassifier`, receives/drains a provider's control queue through `IRadioPrioritizedIngress`, and invokes registered `IRadioControlProtocol` implementations. Protocol matching in the provider callback must remain bounded, allocation-free, non-blocking and `noexcept`; actual control work executes later on the control worker.
+See [`CLOCK_SYNCHRONIZATION.md`](CLOCK_SYNCHRONIZATION.md).
 
-Callback-driven providers such as ESP32 Raw80211 copy accepted inbound packet data into bounded provider-owned queues and invoke only the relevant `IRadioWorkSignal::OnRadioWorkAvailable()`. Those signals wake their worker threads; parsing/reassembly, control-protocol processing and observer notification therefore occur outside the hardware/driver callback. Providers without an asynchronous wake path may be serviced by their worker's bounded iteration cadence.
+### Precision claims
 
-`RadioWorker::AddInterface()` registers the interface with RadioTransport and installs the worker as its standard inbound receiver/work signal. `RadioControlWorker::AddInterface()` binds a provider's optional prioritized-control extension; `RegisterProtocol()` then associates one bounded control protocol with that Radio. These registrations are composition-time operations and should occur before the Radio starts.
+Wire compatibility is not precision certification. A bearer may participate in ordinary Radio traffic while remaining ineligible for certified sub-millisecond Clock synchronization.
 
-Registration does not require a local link address yet: concrete providers such as ESP32 Raw80211 may resolve their hardware address during `Start()`. `RadioTransport::Start()` validates that every started interface then exposes a valid address and rolls the started set back on failure. `RadioTransport::AddInterface()` itself records only the bounded Radio-layer registration; it does not install a competing receive path.
+Current provider evidence boundaries are deliberately conservative:
 
-Both workers expose aggregate service-latency statistics. The standard worker additionally measures the duration of `RadioTransport + observer` processing; the control worker measures registered protocol processing. These metrics allow a physical composition to distinguish RF/provider timestamp -> worker scheduling delay from work performed after the worker begins servicing the packet.
+- ESP32 Raw80211 uses managed finite ingress and real ESP-IDF raw-TX completion, but its present receive timing remains **Estimated** until a conservative physical capture bound is established.
+- ESP32 BLE legacy advertising is broadcast-only, has a 26-byte opaque v3-capable payload, and does not claim Clock-qualified timing.
+- nRF24 provides synchronous terminal TX and genuine unicast link ACK evidence, but does not currently provide a bounded Clock receive timestamp.
 
-## Physical and logical capabilities
-
-`RadioCapabilities` distinguishes the physical packet ceiling from the complete logical-transfer ceiling:
-
-- `MaximumPayloadBytes` — maximum opaque bytes accepted by one concrete `IRadio::Send()` operation;
-- `AddressBytes` — meaningful `RadioAddress` width for that technology;
-- `MaximumLogicalTransferBytes` — optional concrete lower cap on complete RadioTransport transfers; zero means the generic bounded RadioTransport cap applies.
-
-`RadioAddress` is opaque technology-specific link addressing. It is never a permanent device identifier, authentication claim, Mesh node identity or route authority.
-
-## Precision clock exchange
-
-`RadioClockSynchronizer` is a link-local `IRadioControlProtocol`, intentionally separate from ordinary RadioTransport fragmentation/reassembly and packet observers. It preserves the T1/T2/T3/T4 timestamp boundary while `RadioControlWorker` owns synchronization cadence and timeout service independently of Mesh/application traffic.
-
-A provider implementing `IRadioPrioritizedIngress` can physically split clock/control packets into a dedicated bounded queue before ordinary `RadioWorker`. The current ESP32 Raw80211 concrete does this and can require provider-proximate receive timestamps for the sub-millisecond Mesh Lab.
-
-The protocol itself still uses `IRadio` addressing/send semantics, but MTU compatibility alone does not imply scheduling isolation. A provider without prioritized ingress needs another dedicated control-ingress composition if it is to obtain the same latency separation.
-
-Current clock response size is 32 bytes. The ESP32 legacy-advertising BLE concrete exposes only a 20-byte physical payload and therefore cannot carry this exact exchange without a different framing strategy.
-
-See [`CLOCK_SYNCHRONIZATION.md`](CLOCK_SYNCHRONIZATION.md) for the wire protocol, provider requirements and control-worker composition.
-
-## Observer callback subscriptions
-
-Radio integrates the typed, RTTI-free ESPressio Observable subscription model without changing ownership.
-
-Concrete radios expose:
-
-- `IRadioLifecycleObserver` — successful start/stop transitions;
-- `IRadioPacketObserver` — **standard** physical/link packets after the standard worker has advanced them into RadioTransport;
-- `IRadioSendAttemptObserver` — synchronous return of one concrete-radio `Send()` attempt. The callback itself is **not** a transmission-completion signal; inspect `RadioSendResult::Evidence` for any stronger fact.
-
-Latency-critical packets removed into a provider's dedicated Control queue are processed by `IRadioControlProtocol`; they are not required to traverse the ordinary packet-observer chain.
-
-`RadioTransport` exposes:
-
-- `IRadioTransportLifecycleObserver` — logical-transfer service start/stop;
-- `IRadioTransportInterfaceObserver` — interface registration/removal;
-- `IRadioTransportPeerObserver` — generation-safe peer observation/invalidation;
-- `IRadioTransportMessageObserver` — complete logical-transfer send-attempt return and complete inbound logical-transfer observations. `OnRadioTransportSendAttempted` reports synchronous attempt return only; inspect `RadioTransportSendResult::LinkResult.Evidence` for stronger link evidence.
-
-The `IRadioReceiver` -> `RadioWorker` -> `RadioTransport` path remains the single ordinary complete-transfer ownership path. `RadioTransport::SetReceiver()` remains the single complete-transfer delivery path. Observers are supplemental telemetry/composition surfaces only.
-
-Observer callbacks are synchronous. Borrowed packet/transfer payload views are valid only for the duration of the callback. Optional asynchronous Event conversion is provided by `RadioEventBridge`; because Event delivery outlives the callback, that bridge takes one required owned payload snapshot using ESPressio-System memory policy.
+Therefore Tranche 7 establishes the architecture required for sub-millisecond synchronization, but does **not** claim that those concrete providers have all completed physical characterization/certification.
 
 ## Concrete providers
 
-The hardware-neutral interfaces live here. Concrete implementations belong with the technology/platform that owns them:
+Concrete implementations live with their platform/technology owner:
 
-- `ESPressio-ESP32` — ESP32 integrated Raw80211 and BLE Radio concretes;
-- `ESPressio-ESP-Now` — ESP-NOW concrete where used as a Radio implementation;
-- `ESPressio-NRF24` — nRF24L01/nRF24L01+ concrete;
-- future LoRa/sub-GHz/802.15.4 providers may implement the same contract.
+- `ESPressio-ESP32` — Raw80211 and BLE;
+- `ESPressio-NRF24` — nRF24L01/nRF24L01+;
+- later physical providers implement the same managed `IRadio` contract.
 
-Platform-global resource coordination stays with the platform concrete. In particular, ESP32 raw 802.11 and ordinary Wi-Fi share the same physical Wi-Fi PHY; shared channel/power-state ownership therefore belongs in `ESPressio-ESP32`, not in this portable Radio layer.
+ESP32 Raw80211 and ordinary Wi-Fi share one physical Wi-Fi PHY. Channel/readiness/power-state coordination therefore remains in ESPressio-ESP32, not in portable Radio.
 
-## Minimal standard-traffic usage
+## Direct dependencies
 
-```cpp
-#include <ESPressio_Radio.hpp>
+The final Radio dependency boundary is exactly:
 
-ESPressio::Radio::RadioTransport transport;
-ESPressio::Radio::RadioWorker worker(transport);
-
-worker.AddInterface(radio);
-transport.SetReceiver(&higherLayerIngress);
-
-transport.Start();
-worker.Initialize();
-worker.Start();
-
-const uint8_t bytes[] = {1, 2, 3, 4};
-auto result = transport.Send(peerHandle, bytes, sizeof(bytes));
-
-if (result && result.LinkResult.Evidence.TransmissionCompleted()) {
-    // Radio proved transmission completion. This still is not a Mesh delivery ACK.
-}
+```text
+ESPressio-System
+ESPressio-Task
+ESPressio-Timing
+ESPressio-Units
 ```
 
-The registered receiver gets a complete `RadioTransportMessageView` containing the Radio-owned source peer handle, source/destination Radio endpoints, Radio-local transfer identifier, flags and borrowed complete payload. A higher layer such as ESPressio-Mesh then applies authentication, membership, routing/delivery and primitive-family semantics according to its own contracts.
-
-## Memory behaviour
-
-All retained RadioTransport cardinalities are bounded. The default compile-time controls are:
-
-- `ESPRESSIO_RADIO_MAX_INTERFACES = 4`;
-- `ESPRESSIO_RADIO_MAX_REASSEMBLIES = 4`;
-- `ESPRESSIO_RADIO_MAX_RECENT_TRANSFERS = 32`;
-- `ESPRESSIO_RADIO_MAX_LOGICAL_TRANSFER_BYTES = 4096`.
-
-`RadioPeerRegistry` is also finite; its default capacity is controlled independently by `ESPRESSIO_RADIO_MAX_PEERS` (currently 32) so technologies/integrations may choose a smaller bound when appropriate.
-
-`RadioControlWorker` also uses compile-time bounded interface/protocol registration arrays (`ESPRESSIO_RADIO_CONTROL_MAX_INTERFACES` and `ESPRESSIO_RADIO_CONTROL_MAX_PROTOCOLS`). Concrete prioritized providers own the finite physical Control/Standard ingress queues and expose depth/high-water/drop statistics where implemented.
-
-Each active reassembly owns one compile-time fixed payload array of `ESPRESSIO_RADIO_MAX_LOGICAL_TRANSFER_BYTES`; no receive-time heap allocation or fallback exists. `RadioTransport::ReassemblyPayloadCapacityBytes` exposes the exact aggregate payload-array capacity (`ESPRESSIO_RADIO_MAX_REASSEMBLIES x ESPRESSIO_RADIO_MAX_LOGICAL_TRANSFER_BYTES`) for whole-device accounting. When every reassembly slot is occupied, a new transfer is dropped without evicting or corrupting an in-progress transfer. The 256-fragment receipt bitmap is fixed at 32 bytes per reassembly slot.
-
-Observable dispatcher ownership is obtained through `System::Memory::MakeShared<..., ExternalPreferred>()`; Radio does not bypass ESPressio-System with local platform allocation policy.
-
-Concrete callback-driven providers are separately responsible for finite bounded RX/TX storage and for documenting their physical queue/pool costs.
+Radio has no direct Event, Observable, Threads, Command, State, Mesh, Adapters or platform dependency.
 
 ## Validation
 
-Native tests exercise direct-link fragmentation/reassembly at small MTUs, provider-specific logical-transfer bounds, qualified direct-link evidence aggregation, typed one-to-many Observable callbacks, send-attempt semantics, peer lifecycle, and RAII unsubscription. Clock synchronization tests validate the separate control-protocol exchange, strict receive-timestamp behavior, source-less addressing and one-outstanding-exchange semantics.
+The `primitives_redesign` workflow validates:
 
-The normal ESP32 PlatformIO smoke surface includes the Radio umbrella, RadioWorker, peer registry, optional Radio->Event integration and clock synchronization against the coordinated structural-realignment branches. During the current Mesh tranche, Actions execution may be unavailable due external budget limits; source presence in the workflow must not be described as a green run.
+- canonical umbrella/dependency eradication;
+- managed-provider contract;
+- exact v3 wire vectors;
+- Clock wire/capture and adaptive coordinator behavior;
+- Q1 capacity isolation and deterministic accounting;
+- bounded reassembly and quarantine promotion;
+- malformed/truncated/spoofed ingress rejection;
+- R3 DRR/deadline behavior including Clock under saturated BestEffort load;
+- single-owner ingress routing;
+- cooperative one-Task domain runtime;
+- family-opaque `RadioRuntime` lifecycle and peer semantics.
 
-During the Mesh implementation tranche, participating dependencies are pinned to their matching `structural_realignment_propagation_ESPressio-Mesh` branches until reintegration.
+Provider repositories have their own target compilation gates. No version number, tag or release is changed by this structural tranche.
