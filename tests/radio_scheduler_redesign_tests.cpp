@@ -1,3 +1,4 @@
+#include <ESPressio_RadioClockWireV1.hpp>
 #include <ESPressio_RadioScheduler.hpp>
 
 #include <array>
@@ -25,11 +26,12 @@ class Provider final:public IRadio{
 public:
     enum class Mode{Immediate,Deferred,BusyOnce};
     Mode CurrentMode=Mode::Immediate;bool Ready=true;std::uint32_t NextHandle=1;IRadioRuntimeSink* Sink=nullptr;
-    unsigned SendCalls=0;std::array<RadioServiceClass,32> Classes{};std::array<std::uint8_t,32> Fragments{};
+    unsigned SendCalls=0;unsigned DirectClockFrames=0;std::array<RadioServiceClass,32> Classes{};std::array<std::uint8_t,32> Fragments{};
+    std::array<std::uint8_t,32> LastPhysical{};std::size_t LastPhysicalBytes=0;std::uint16_t MaximumPayload=24;
     RadioContentionDomainId Domain{1};RadioAddress Address{};RadioDirectLinkEvidence ImmediateEvidence=RadioDirectLinkEvidence::CompletedWithoutPeerAcknowledgement();
     Provider(){const std::uint8_t b[2]{7,8};Address=RadioAddress::FromBytes(b,2);}
     bool Start()override{return true;}void Stop()noexcept override{}bool IsStarted()const noexcept override{return true;}
-    RadioCapabilities Capabilities()const noexcept override{return {RadioCapability::HardwareAddressing,24,2,100};}
+    RadioCapabilities Capabilities()const noexcept override{return {RadioCapability::HardwareAddressing,MaximumPayload,2,100};}
     RadioAddress LocalAddress()const noexcept override{return Address;}RadioContentionDomainId ContentionDomain()const noexcept override{return Domain;}
     RadioProviderResourceProfile ProviderResources()const noexcept override{return {4,2,1,0};}
     bool IsTransmitReady()const noexcept override{return Ready;}
@@ -37,8 +39,15 @@ public:
         return {20,100,RadioCostEstimateQuality::ConservativeAirtime};
     }
     RadioSendResult Send(const RadioAddress&,const std::uint8_t* payload,std::size_t bytes)noexcept override{
-        ++SendCalls;RadioTransportV3FragmentView decoded{};assert(DecodeRadioTransportV3Fragment(payload,bytes,decoded));
-        Classes[SendCalls-1]=decoded.Header.ServiceClass;Fragments[SendCalls-1]=decoded.Header.FragmentIndex;
+        ++SendCalls;
+        if(bytes>=2&&payload[0]==0x52&&payload[1]==0x43){
+            ++DirectClockFrames;Classes[SendCalls-1]=RadioServiceClass::Clock;Fragments[SendCalls-1]=0;
+            LastPhysicalBytes=bytes;assert(bytes<=LastPhysical.size());
+            for(std::size_t i=0;i<bytes;++i)LastPhysical[i]=payload[i];
+        }else{
+            RadioTransportV3FragmentView decoded{};assert(DecodeRadioTransportV3Fragment(payload,bytes,decoded));
+            Classes[SendCalls-1]=decoded.Header.ServiceClass;Fragments[SendCalls-1]=decoded.Header.FragmentIndex;
+        }
         if(CurrentMode==Mode::BusyOnce){CurrentMode=Mode::Immediate;Ready=false;return {RadioSendStatus::Busy,0};}
         if(CurrentMode==Mode::Deferred){const auto handle=RadioTransmissionHandle{NextHandle++};return RadioSendResult::Accepted({},handle);}
         return RadioSendResult::Accepted(ImmediateEvidence);
@@ -47,6 +56,16 @@ public:
     ManagedRadioIngressServiceResult ServiceInbound(std::size_t)noexcept override{return {};}
     void Resolve(std::uint32_t handle,RadioDirectLinkEvidence evidence){assert(Sink);Sink->TransmissionResolved(*this,{handle},evidence);}
     void BecomeReady(){Ready=true;assert(Sink);Sink->TransmitReadinessChanged(*this);}
+};
+
+struct ClockPrepare final{
+    unsigned Calls=0;std::uint64_t LastNow=0;
+    static bool Prepare(void* context,std::uint8_t* frame,std::size_t bytes,std::uint64_t now)noexcept{
+        auto& self=*static_cast<ClockPrepare*>(context);++self.Calls;self.LastNow=now;
+        if(!frame||bytes!=RadioClockWireV1::ResponseBytes)return false;
+        for(std::size_t i=0;i<8;++i)frame[16+i]=static_cast<std::uint8_t>((now>>(8u*i))&0xffu);
+        return true;
+    }
 };
 
 static RadioServiceProfile Expiry(RadioServiceClass c,RadioDirectLinkEvidenceRequirement evidence=RadioDirectLinkEvidenceRequirement::TransmissionCompletion){return {c,RadioDeadlineTreatment::ExpiryOnly,evidence};}
@@ -111,6 +130,28 @@ int main(){
         assert(sa.BindProvider(a)==RadioSchedulerStatus::Success&&sb.BindProvider(b)==RadioSchedulerStatus::Success);assert(sa.Initialize(&ra)==RadioSchedulerStatus::Success&&sb.Initialize(&rb)==RadioSchedulerStatus::Success);
         assert(sa.Submit(a,a.LocalAddress(),Expiry(RadioServiceClass::BestEffort),ExpiryTiming(),bytes5,5));assert(sb.Submit(b,b.LocalAddress(),Expiry(RadioServiceClass::BestEffort),ExpiryTiming(),bytes5,5));
         sa.Service(1);sb.Service(1);assert(a.SendCalls==1&&b.SendCalls==1);
+    }
+    {
+        Outbound capacity;capacity.Initialize();Provider provider;provider.MaximumPayload=32;ResultSink results;Scheduler scheduler(capacity,{1});
+        assert(scheduler.BindProvider(provider)==RadioSchedulerStatus::Success);assert(scheduler.Initialize(&results)==RadioSchedulerStatus::Success);
+        assert(scheduler.Submit(provider,provider.LocalAddress(),Expiry(RadioServiceClass::BestEffort),ExpiryTiming(),bytes5,5));
+        RadioClockResponseV1 response{};response.Sequence=7;response.T2SystemNanoseconds=1234;response.T3SystemNanoseconds=0;
+        response.ReferenceReliability=ESPressio::Timing::TimeReliability::Synchronized;
+        response.CaptureQuality=RadioClockCaptureQuality::SoftwareBounded;
+        response.ReferenceUncertainty=ESPressio::Timing::ClockUncertainty::Known(100);
+        response.CaptureUncertainty=ESPressio::Timing::ClockUncertainty::Known(200);
+        std::array<std::uint8_t,RadioClockWireV1::ResponseBytes> frame{};assert(EncodeRadioClockResponseV1(response,frame.data(),frame.size()));
+        ClockPrepare prepare;RadioTransferTiming urgent{1'000'000'000ULL,50};
+        const auto clock=scheduler.SubmitClockFrame(provider,provider.LocalAddress(),Promote(RadioServiceClass::Clock),urgent,
+            frame.data(),frame.size(),{&prepare,&ClockPrepare::Prepare});
+        assert(clock);
+        scheduler.Service(1);
+        assert(provider.SendCalls==1&&provider.DirectClockFrames==1&&provider.LastPhysicalBytes==32);
+        assert(prepare.Calls==1&&prepare.LastNow==1&&results.Count==1&&results.Results[0].TransferId==clock.TransferId);
+        RadioClockResponseV1 sent{};assert(DecodeRadioClockResponseV1(provider.LastPhysical.data(),provider.LastPhysicalBytes,sent));
+        assert(sent.T2SystemNanoseconds==1234&&sent.T3SystemNanoseconds==1);
+        scheduler.Service(2);
+        assert(provider.SendCalls==2&&provider.Classes[1]==RadioServiceClass::BestEffort&&results.Count==2);
     }
     return 0;
 }

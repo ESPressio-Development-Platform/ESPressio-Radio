@@ -69,6 +69,23 @@ struct RadioSchedulerServiceResult final {
     std::uint64_t EarliestDeadlineNanoseconds{0};
 };
 
+/// <summary>Late-bound preparation applied only to one already-owned Clock physical-frame template.</summary>
+/// <remarks>
+/// The fixed thunk runs inside the normal R3 service quantum after the sealed Clock template is copied into the
+/// contention-domain scratch buffer and immediately before provider cost/submission. It exists solely so Clock can
+/// capture T1/T3 close to the physical send boundary without owning a privileged queue or mutable retained payload.
+/// </remarks>
+struct RadioClockFramePrepareTarget final {
+    void* Context{nullptr};
+    bool (*Prepare)(void*, std::uint8_t*, std::size_t, std::uint64_t) noexcept{nullptr};
+    constexpr explicit operator bool() const noexcept { return Prepare != nullptr; }
+};
+
+enum class RadioOutboundWireMode : std::uint8_t {
+    TransportV3 = 0,
+    DirectPhysicalClock = 1
+};
+
 /// <summary>Compile-time weighted-DRR and bounded-promotion profile for one contention domain.</summary>
 template<std::uint64_t TInfrastructureQuantum,
          std::uint64_t TClockQuantum,
@@ -108,6 +125,8 @@ struct RadioOutboundTransferRecord final {
     std::uint8_t FragmentCount{0};
     std::uint8_t NextFragmentIndex{0};
     RadioDirectLinkEvidence AggregateEvidence{};
+    RadioOutboundWireMode WireMode{RadioOutboundWireMode::TransportV3};
+    RadioClockFramePrepareTarget ClockPrepare{};
 
     RadioOutboundTransferRecord(
         RadioByteLease&& bytes,
@@ -116,9 +135,11 @@ struct RadioOutboundTransferRecord final {
         RadioTransferId transferId,
         const RadioServiceProfile& profile,
         const RadioTransferTiming& timing,
-        std::uint8_t fragmentCount) noexcept
+        std::uint8_t fragmentCount,
+        RadioOutboundWireMode wireMode=RadioOutboundWireMode::TransportV3,
+        RadioClockFramePrepareTarget clockPrepare={}) noexcept
         : Bytes(std::move(bytes)),Provider(provider),Destination(destination),TransferId(transferId),
-          Profile(profile),Timing(timing),FragmentCount(fragmentCount) {}
+          Profile(profile),Timing(timing),FragmentCount(fragmentCount),WireMode(wireMode),ClockPrepare(clockPrepare) {}
 
     bool IsComplete() const noexcept { return FragmentCount!=0 && NextFragmentIndex>=FragmentCount; }
 };
@@ -153,14 +174,14 @@ public:
 };
 }
 
-/// <summary>
-/// One bounded R3 arbiter for one physical contention domain.
-/// </summary>
+/// <summary>One bounded R3 arbiter for one physical contention domain.</summary>
 /// <remarks>
 /// It owns six FIFO class queues, rotating DRR deficits, one fixed physical-frame scratch buffer and at most one
-/// scheduler-owned outstanding physical fragment. Provider Busy never creates a polling retry; fixed provider/capacity/
-/// deadline wakes ask the owner to call Service() again. This class owns no Task; RadioDomainRuntime supplies the one T1
-/// execution context in the next layer.
+/// scheduler-owned outstanding physical frame. Ordinary logical transfers use exact RadioTransport v3 framing.
+/// Certified direct-neighbour Clock exchanges may use one DirectPhysicalClock frame, but remain in the same Clock Q1
+/// capacity, DRR/EDF queue, provider-cost model and contention-domain completion path. Provider Busy never creates a
+/// polling retry; fixed provider/capacity/deadline wakes ask the owner to call Service() again. This class owns no Task;
+/// RadioDomainRuntime supplies the one T1 execution context in the next layer.
 /// </remarks>
 template<class TOutboundCapacity,class TSchedulerProfile,
          std::size_t TQueueDepth,std::size_t TRecentTransferIds,
@@ -227,6 +248,8 @@ class RadioDomainScheduler final : public IRadioRuntimeSink {
         out=a+b;return true;
     }
     static std::uint64_t FragmentPayloadBytes(const RadioOutboundTransferRecord& record)noexcept{
+        if(record.WireMode==RadioOutboundWireMode::DirectPhysicalClock)
+            return record.NextFragmentIndex==0?record.Bytes.Length():0;
         const auto mtu=record.Provider->Capabilities().MaximumPayloadBytes;
         const auto chunk=RadioTransportV3MaximumFragmentPayload(mtu,record.Provider->LocalAddress().Length);
         const auto offset=static_cast<std::size_t>(record.NextFragmentIndex)*chunk;
@@ -237,6 +260,8 @@ class RadioDomainScheduler final : public IRadioRuntimeSink {
     }
     static std::size_t EncodedFragmentBytes(const RadioOutboundTransferRecord& record)noexcept{
         const auto payload=FragmentPayloadBytes(record);
+        if(record.WireMode==RadioOutboundWireMode::DirectPhysicalClock)
+            return payload&&record.Provider&&payload<=record.Provider->Capabilities().MaximumPayloadBytes?payload:0;
         const auto header=RadioTransportV3HeaderBytes(record.Provider->LocalAddress());
         return payload&&header?header+payload:0;
     }
@@ -346,6 +371,17 @@ class RadioDomainScheduler final : public IRadioRuntimeSink {
         auto* head=_queues[classIndex].Head();if(!head)return false;
         auto& record=head->template Get<RadioOutboundTransferRecord>();
         if(record.Timing.ExpiryNanoseconds<=now)return false;
+        if(record.WireMode==RadioOutboundWireMode::DirectPhysicalClock){
+            if(record.Profile.Class!=RadioServiceClass::Clock||record.FragmentCount!=1||record.NextFragmentIndex!=0)return false;
+            const auto view=record.Bytes.View();
+            if(!view.Data||view.Size==0||view.Size>record.Provider->Capabilities().MaximumPayloadBytes||view.Size>_scratch.size())return false;
+            std::memcpy(_scratch.data(),view.Data,view.Size);
+            if(record.ClockPrepare&& !record.ClockPrepare.Prepare(record.ClockPrepare.Context,_scratch.data(),view.Size,now))return false;
+            encoded=view.Size;
+            cost=record.Provider->EstimateTransmissionCost(record.Destination,encoded,record.Profile);
+            return cost.IsValid() &&
+                (record.Profile.DeadlineTreatment!=RadioDeadlineTreatment::Promotable||cost.SupportsPromotableDeadline());
+        }
         std::uint32_t residence=0;
         if(!TryEncodeRemainingResidenceMilliseconds(record.Timing.ExpiryNanoseconds,now,residence))return false;
         const auto providerAddress=record.Provider->LocalAddress();
@@ -420,6 +456,32 @@ class RadioDomainScheduler final : public IRadioRuntimeSink {
         return earliest;
     }
 
+    RadioTransferSubmissionResult SubmitOwned(
+        IRadio& provider,const RadioAddress& destination,const RadioServiceProfile& profile,
+        const RadioTransferTiming& timing,const std::uint8_t* payload,std::size_t payloadBytes,
+        std::uint8_t fragmentCount,RadioOutboundWireMode wireMode,RadioClockFramePrepareTarget clockPrepare)noexcept{
+        std::unique_lock<System::Synchronization::Mutex> lock(_mutex,std::try_to_lock);
+        if(!lock.owns_lock())return {RadioSchedulerStatus::Busy,0};
+        RadioTransferId id=0;
+        if(!_ids.TryIssue([this](RadioTransferId candidate)noexcept{return ActiveTransferId(candidate);},id))
+            return {RadioSchedulerStatus::ResourceUnavailable,0};
+        RadioCapacityReservation reservation;
+        const auto reserved=_capacity->TryAcquireTrusted(profile.Class,payloadBytes,reservation);
+        if(reserved==RadioResourceStatus::Busy)return {RadioSchedulerStatus::Busy,0};
+        if(reserved!=RadioResourceStatus::Success)return {RadioSchedulerStatus::ResourceUnavailable,0};
+        auto target=reservation.Bytes().MutableView();if(!target||target.Capacity<payloadBytes)return {RadioSchedulerStatus::ResourceUnavailable,0};
+        std::memcpy(target.Data,payload,payloadBytes);
+        if(reservation.Bytes().Commit(payloadBytes)!=RadioResourceStatus::Success)return {RadioSchedulerStatus::ResourceUnavailable,0};
+        RadioCapacityRecordLease lease;
+        const auto built=_capacity->template Construct<RadioOutboundTransferRecord>(
+            std::move(reservation),lease,&provider,destination,id,profile,timing,fragmentCount,wireMode,clockPrepare);
+        if(built!=RadioResourceStatus::Success)return {RadioSchedulerStatus::ResourceUnavailable,0};
+        const auto classIndex=ClassIndex(profile.Class);
+        if(classIndex>=RadioServiceClassCount||!_queues[classIndex].Push(std::move(lease)))
+            return {RadioSchedulerStatus::ResourceUnavailable,0};
+        Wake();return {RadioSchedulerStatus::Success,id};
+    }
+
 public:
     RadioDomainScheduler(TOutboundCapacity& capacity,RadioContentionDomainId domain)noexcept:_capacity(&capacity),_domain(domain){}
     RadioDomainScheduler(const RadioDomainScheduler&)=delete;
@@ -462,26 +524,32 @@ public:
                 RadioTransportV3HeaderBytes(provider.LocalAddress())+(payloadBytes<chunk?payloadBytes:chunk),profile);
             if(!probe.SupportsPromotableDeadline())return {RadioSchedulerStatus::InvalidConfiguration,0};
         }
-        std::unique_lock<System::Synchronization::Mutex> lock(_mutex,std::try_to_lock);
-        if(!lock.owns_lock())return {RadioSchedulerStatus::Busy,0};
-        RadioTransferId id=0;
-        if(!_ids.TryIssue([this](RadioTransferId candidate)noexcept{return ActiveTransferId(candidate);},id))
-            return {RadioSchedulerStatus::ResourceUnavailable,0};
-        RadioCapacityReservation reservation;
-        const auto reserved=_capacity->TryAcquireTrusted(profile.Class,payloadBytes,reservation);
-        if(reserved==RadioResourceStatus::Busy)return {RadioSchedulerStatus::Busy,0};
-        if(reserved!=RadioResourceStatus::Success)return {RadioSchedulerStatus::ResourceUnavailable,0};
-        auto target=reservation.Bytes().MutableView();if(!target||target.Capacity<payloadBytes)return {RadioSchedulerStatus::ResourceUnavailable,0};
-        std::memcpy(target.Data,payload,payloadBytes);
-        if(reservation.Bytes().Commit(payloadBytes)!=RadioResourceStatus::Success)return {RadioSchedulerStatus::ResourceUnavailable,0};
-        RadioCapacityRecordLease lease;
-        const auto built=_capacity->template Construct<RadioOutboundTransferRecord>(
-            std::move(reservation),lease,&provider,destination,id,profile,timing,static_cast<std::uint8_t>(fragmentCount));
-        if(built!=RadioResourceStatus::Success)return {RadioSchedulerStatus::ResourceUnavailable,0};
-        const auto classIndex=ClassIndex(profile.Class);
-        if(classIndex>=RadioServiceClassCount||!_queues[classIndex].Push(std::move(lease)))
-            return {RadioSchedulerStatus::ResourceUnavailable,0};
-        Wake();return {RadioSchedulerStatus::Success,id};
+        return SubmitOwned(provider,destination,profile,timing,payload,payloadBytes,
+            static_cast<std::uint8_t>(fragmentCount),RadioOutboundWireMode::TransportV3,{});
+    }
+
+    /// <summary>Queues one certified direct-neighbour Clock frame in the normal Clock Q1/R3 path.</summary>
+    /// <remarks>
+    /// The sealed payload is a physical-frame template and must already fit the selected provider MTU and domain scratch.
+    /// An optional fixed prepare thunk may patch only late-bound transmit-time fields in scratch immediately before Send.
+    /// The retained template itself remains immutable. This method creates no separate Clock worker, queue, or priority path.
+    /// </remarks>
+    RadioTransferSubmissionResult SubmitClockFrame(
+        IRadio& provider,const RadioAddress& destination,const RadioServiceProfile& profile,
+        const RadioTransferTiming& timing,const std::uint8_t* frameTemplate,std::size_t frameBytes,
+        RadioClockFramePrepareTarget prepare={})noexcept{
+        if(!_initialized)return {RadioSchedulerStatus::NotInitialized,0};
+        if(_stopping||!ProviderBound(provider)||profile.Class!=RadioServiceClass::Clock||!profile.IsValid()||
+           !timing.IsValidFor(profile)||!destination.IsValid()||!frameTemplate||frameBytes==0)
+            return {RadioSchedulerStatus::InvalidConfiguration,0};
+        if(frameBytes>provider.Capabilities().MaximumPayloadBytes||frameBytes>TPhysicalScratchBytes)
+            return {RadioSchedulerStatus::PayloadTooLarge,0};
+        if(profile.DeadlineTreatment==RadioDeadlineTreatment::Promotable){
+            const auto probe=provider.EstimateTransmissionCost(destination,frameBytes,profile);
+            if(!probe.SupportsPromotableDeadline())return {RadioSchedulerStatus::InvalidConfiguration,0};
+        }
+        return SubmitOwned(provider,destination,profile,timing,frameTemplate,frameBytes,1,
+            RadioOutboundWireMode::DirectPhysicalClock,prepare);
     }
 
     RadioSchedulerServiceResult Service(std::uint64_t now)noexcept{
