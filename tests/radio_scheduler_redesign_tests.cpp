@@ -63,7 +63,8 @@ struct ClockPrepare final{
     static bool Prepare(void* context,std::uint8_t* frame,std::size_t bytes,std::uint64_t now)noexcept{
         auto& self=*static_cast<ClockPrepare*>(context);++self.Calls;self.LastNow=now;
         if(!frame||bytes!=RadioClockWireV1::ResponseBytes)return false;
-        for(std::size_t i=0;i<8;++i)frame[16+i]=static_cast<std::uint8_t>((now>>(8u*i))&0xffu);
+        for(std::size_t i=0;i<4;++i)frame[16+i]=static_cast<std::uint8_t>((now>>(8u*i))&0xffu);
+        for(std::size_t i=0;i<4;++i)frame[20+i]=static_cast<std::uint8_t>((now>>(8u*i))&0xffu);
         return true;
     }
 };
@@ -135,7 +136,8 @@ int main(){
         Outbound capacity;capacity.Initialize();Provider provider;provider.MaximumPayload=32;ResultSink results;Scheduler scheduler(capacity,{1});
         assert(scheduler.BindProvider(provider)==RadioSchedulerStatus::Success);assert(scheduler.Initialize(&results)==RadioSchedulerStatus::Success);
         assert(scheduler.Submit(provider,provider.LocalAddress(),Expiry(RadioServiceClass::BestEffort),ExpiryTiming(),bytes5,5));
-        RadioClockResponseV1 response{};response.Sequence=7;response.T2SystemNanoseconds=1234;response.T3SystemNanoseconds=0;
+        RadioClockResponseV1 response{};response.Sequence=7;response.T2SystemNanoseconds=1234;
+        response.RemoteSystemProcessingNanoseconds=0;response.RemoteMonotonicProcessingNanoseconds=0;
         response.ReferenceReliability=ESPressio::Timing::TimeReliability::Synchronized;
         response.CaptureQuality=RadioClockCaptureQuality::SoftwareBounded;
         response.ReferenceUncertainty=ESPressio::Timing::ClockUncertainty::Known(100);
@@ -149,7 +151,7 @@ int main(){
         assert(provider.SendCalls==1&&provider.DirectClockFrames==1&&provider.LastPhysicalBytes==32);
         assert(prepare.Calls==1&&prepare.LastNow==1&&results.Count==1&&results.Results[0].TransferId==clock.TransferId);
         RadioClockResponseV1 sent{};assert(DecodeRadioClockResponseV1(provider.LastPhysical.data(),provider.LastPhysicalBytes,sent));
-        assert(sent.T2SystemNanoseconds==1234&&sent.T3SystemNanoseconds==1);
+        assert(sent.T2SystemNanoseconds==1234&&sent.RemoteSystemProcessingNanoseconds==1&&sent.RemoteMonotonicProcessingNanoseconds==1);
         scheduler.Service(2);
         assert(provider.SendCalls==2&&provider.Classes[1]==RadioServiceClass::BestEffort&&results.Count==2);
     }
