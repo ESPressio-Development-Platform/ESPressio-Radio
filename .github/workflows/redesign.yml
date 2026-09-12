@@ -13,21 +13,21 @@ jobs:
       - uses: actions/checkout@v4
       - name: Checkout System substrate
         run: git clone --depth 1 --branch primitives_redesign https://github.com/ESPressio-Development-Platform/ESPressio-System.git deps/System
-      - name: Build R7 foundation contracts
+      - name: Build R7 foundation contracts without RTTI/exceptions
         run: >-
           g++ -std=c++17 -Wall -Wextra -Werror -fno-rtti -fno-exceptions
           -Isrc tests/radio_redesign_foundation_tests.cpp -o radio_redesign_foundation_tests
       - name: Run R7 foundation contracts
         run: ./radio_redesign_foundation_tests
-      - name: Build managed provider contract
+      - name: Build managed provider contract without RTTI/exceptions
         run: >-
           g++ -std=c++17 -Wall -Wextra -Werror -fno-rtti -fno-exceptions
           -Isrc tests/radio_managed_provider_contract_tests.cpp -o radio_managed_provider_contract_tests
       - name: Run managed provider contract
         run: ./radio_managed_provider_contract_tests
-      - name: Build Radio-local Q1 capacity contracts
+      - name: Build System-backed Radio-local Q1 capacity contracts
         run: >-
-          g++ -std=c++17 -Wall -Wextra -Werror -fno-rtti -fno-exceptions
+          g++ -std=c++17 -Wall -Wextra -Werror -fno-rtti
           -Isrc -Ideps/System/src tests/radio_capacity_redesign_tests.cpp -o radio_capacity_redesign_tests -pthread
       - name: Run Radio-local Q1 capacity contracts
         run: ./radio_capacity_redesign_tests
