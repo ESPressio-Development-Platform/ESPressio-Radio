@@ -48,7 +48,11 @@ public:
         return capture;
     }
     Timing::ClockSynchronizationResult SubmitSynchronizationObservation(const Timing::ClockSynchronizationObservation<>& observation) override {
-        LastObservation=observation;++Submitted;return {true,Timing::ClockObservationRejection::None,0,0,0,0};
+        LastObservation=observation;++Submitted;
+        Status.LastAcceptedSampleMonotonic=observation.T4.MonotonicTimeNanoseconds;
+        Status.HasSynchronizationDeadline=true;
+        Status.NextRequiredSynchronizationMonotonic=observation.T4.MonotonicTimeNanoseconds+Profile.AcquisitionIntervalNanoseconds;
+        return {true,Timing::ClockObservationRejection::None,0,0,0,0};
     }
     Timing::ClockSynchronizationStatus GetSynchronizationStatus() const override{return Status;}
     Timing::ClockConfigurationStatus ConfigureSynchronization(const Timing::ClockSynchronizationProfile& profile) override{Profile=profile;return Timing::ClockConfigurationStatus::Success;}
@@ -136,8 +140,8 @@ int main(){
     auto& requestItem=scheduler.Items[0];
     RadioClockRequestV1 request{};assert(DecodeRadioClockRequestV1(requestItem.Bytes.data(),requestItem.Size,request));
     assert(request.ReplyAddress==provider.LocalAddress());
-    target.NextCapture={10'000'000'000ULL,999'100'000ULL,Timing::ClockUncertainty::Known(200),Timing::ClockCaptureQuality::SoftwareBounded};
-    assert(requestItem.Prepare.Prepare(requestItem.Prepare.Context,requestItem.Bytes.data(),requestItem.Size,999'100'000));
+    target.NextCapture={10'000'000'000ULL,999'800'000ULL,Timing::ClockUncertainty::Known(200),Timing::ClockCaptureQuality::SoftwareBounded};
+    assert(requestItem.Prepare.Prepare(requestItem.Prepare.Context,requestItem.Bytes.data(),requestItem.Size,999'800'000));
     coordinator.RadioTransferResolved({requestItem.Id,RadioTransferTerminalStatus::Completed,RadioDirectLinkEvidence::CompletedWithoutPeerAcknowledgement()});
     assert(coordinator.HasPendingClientExchange());
 
@@ -147,7 +151,7 @@ int main(){
     response.ReferenceReliability=Timing::TimeReliability::Synchronized;response.CaptureQuality=RadioClockCaptureQuality::SoftwareBounded;
     response.ReferenceUncertainty=Timing::ClockUncertainty::Known(50'000);response.CaptureUncertainty=Timing::ClockUncertainty::Known(300);
     std::array<std::uint8_t,RadioClockWireV1::ResponseBytes> responseWire{};assert(EncodeRadioClockResponseV1(response,responseWire.data(),responseWire.size()));
-    const auto t4Evidence=Evidence(999'500'000ULL,10'000'400'000ULL,7,150);
+    const auto t4Evidence=Evidence(1'000'200'000ULL,10'000'400'000ULL,7,150);
     coordinator.OnRadioClockFrame(provider,Packet(reference,provider.LocalAddress(),responseWire.data(),responseWire.size()),t4Evidence);
     assert(target.Submitted==1&&!coordinator.HasPendingClientExchange());
     assert(target.LastObservation.T1.SystemTimeNanoseconds==10'000'000'000ULL);
@@ -157,18 +161,19 @@ int main(){
     assert(target.LastObservation.T3.MonotonicTimeNanoseconds==250'001ULL);
     assert(target.LastObservation.T4.SystemTimeNanoseconds==10'000'400'000ULL);
     assert(target.LastObservation.ReferenceIdentity==0x1234);
+    assert(target.Status.NextRequiredSynchronizationMonotonic==1'250'200'000ULL);
 
     // Reference-side request capture is retained, then T3 is patched only at late scheduler preparation.
     RadioClockRequestV1 remoteRequest{77,reference};std::array<std::uint8_t,RadioClockWireV1::MaximumRequestBytes> requestWire{};std::size_t requestWireBytes=0;
     assert(EncodeRadioClockRequestV1(remoteRequest,requestWire.data(),requestWire.size(),requestWireBytes));
-    const auto t2Evidence=Evidence(2'000'000'000ULL,30'000'000'000ULL,7,120);
+    const auto t2Evidence=Evidence(1'010'000'000ULL,30'000'000'000ULL,7,120);
     coordinator.OnRadioClockFrame(provider,Packet(reference,provider.LocalAddress(),requestWire.data(),requestWireBytes),t2Evidence);
     assert(coordinator.HasPendingReferenceResponse());
-    coordinator.ServiceDomain(2'000'100'000ULL);assert(scheduler.Count==2);
+    coordinator.ServiceDomain(1'010'100'000ULL);assert(scheduler.Count==2);
     auto& responseItem=scheduler.Items[1];assert(responseItem.Size==RadioClockWireV1::ResponseBytes);
     target.Status.Reliability=Timing::TimeReliability::Synchronized;target.Status.CurrentUncertainty=Timing::ClockUncertainty::Known(80'000);
-    target.NextCapture={30'000'250'000ULL,2'000'240'000ULL,Timing::ClockUncertainty::Known(200),Timing::ClockCaptureQuality::SoftwareBounded};
-    assert(responseItem.Prepare.Prepare(responseItem.Prepare.Context,responseItem.Bytes.data(),responseItem.Size,2'000'240'000ULL));
+    target.NextCapture={30'000'250'000ULL,1'010'240'000ULL,Timing::ClockUncertainty::Known(200),Timing::ClockCaptureQuality::SoftwareBounded};
+    assert(responseItem.Prepare.Prepare(responseItem.Prepare.Context,responseItem.Bytes.data(),responseItem.Size,1'010'240'000ULL));
     RadioClockResponseV1 prepared{};assert(DecodeRadioClockResponseV1(responseItem.Bytes.data(),responseItem.Size,prepared));
     assert(prepared.Sequence==77&&prepared.T2SystemNanoseconds==30'000'000'000ULL);
     assert(prepared.RemoteSystemProcessingNanoseconds==250'000);
@@ -181,7 +186,7 @@ int main(){
     // Provider timestamp continuity changes invalidate Timing estimator lineage without changing the selected reference.
     response.Sequence=88; // stale and ignored, but generation transition is still observed as provider continuity evidence.
     assert(EncodeRadioClockResponseV1(response,responseWire.data(),responseWire.size()));
-    auto changed=Evidence(3'000'000'000ULL,40'000'000'000ULL,8,100);
+    auto changed=Evidence(1'020'000'000ULL,40'000'000'000ULL,8,100);
     coordinator.OnRadioClockFrame(provider,Packet(reference,provider.LocalAddress(),responseWire.data(),responseWire.size()),changed);
     assert(target.Resets==1);
 
