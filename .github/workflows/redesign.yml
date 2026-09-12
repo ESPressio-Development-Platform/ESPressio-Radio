@@ -81,3 +81,10 @@ jobs:
           -Isrc -Ideps/System/src -Ideps/Task/src -Ideps/Timing/src tests/radio_domain_runtime_tests.cpp -o radio_domain_runtime_tests -pthread
       - name: Run cooperative domain runtime contracts
         run: ./radio_domain_runtime_tests
+      - name: Build family-opaque Radio runtime facade contracts
+        run: >-
+          g++ -std=c++17 -Wall -Wextra -Werror -fno-rtti
+          -Itests/host_arduino -Isrc -Ideps/System/src -Ideps/Task/src -Ideps/Timing/src -Ideps/Units/src
+          tests/radio_runtime_tests.cpp -o radio_runtime_tests -pthread
+      - name: Run family-opaque Radio runtime facade contracts
+        run: ./radio_runtime_tests
