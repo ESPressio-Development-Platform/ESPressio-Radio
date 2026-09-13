@@ -1,0 +1,257 @@
+name: R9 transfer-id lease seam patch
+
+on:
+  push:
+    branches: [primitives_redesign]
+    paths:
+      - .github/workflows/r9-transfer-id-lease-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: primitives_redesign
+      - name: Apply bounded transfer-id lease seam
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          scheduler = Path('src/ESPressio_RadioScheduler.hpp')
+          s = scheduler.read_text()
+
+          old = '''struct RadioSchedulerWakeTarget final {
+    void* Context{nullptr};
+    void (*Wake)(void*) noexcept{nullptr};
+};
+'''
+          new = '''struct RadioSchedulerWakeTarget final {
+    void* Context{nullptr};
+    void (*Wake)(void*) noexcept{nullptr};
+};
+
+/// <summary>Optional family-neutral external lease over scheduler-local transfer identifiers.</summary>
+/// <remarks>
+/// A composition may reserve an issued transport identifier beyond Radio's own terminal result when a higher transport
+/// protocol still has bounded evidence outstanding. Radio owns no meaning for Correlation and never interprets the
+/// external lease as Primitive admission. All callbacks execute while the scheduler mutation lock is held and therefore
+/// must be bounded and nonblocking.
+/// </remarks>
+struct RadioTransferIdLeaseTarget final {
+    void* Context{nullptr};
+    bool (*IsReserved)(void*,RadioContentionDomainId,RadioTransferId) noexcept{nullptr};
+    bool (*ReserveIssued)(void*,RadioContentionDomainId,std::uint64_t,RadioTransferId) noexcept{nullptr};
+    void (*ReleaseIssued)(void*,RadioContentionDomainId,std::uint64_t,RadioTransferId) noexcept{nullptr};
+    constexpr explicit operator bool() const noexcept {
+        return Context&&IsReserved&&ReserveIssued&&ReleaseIssued;
+    }
+};
+'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = '''    IRadioTransferResultSink* _resultSink{nullptr};
+    RadioSchedulerWakeTarget _wake{};
+    System::Synchronization::Mutex _mutex;
+'''
+          new = '''    IRadioTransferResultSink* _resultSink{nullptr};
+    RadioSchedulerWakeTarget _wake{};
+    RadioTransferIdLeaseTarget _idLease{};
+    System::Synchronization::Mutex _mutex;
+'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = '''        RadioTransferId id=0;
+        if(!_ids.TryIssue([this](RadioTransferId candidate)noexcept{return ActiveTransferId(candidate);},id))
+            return {RadioSchedulerStatus::ResourceUnavailable,0};
+'''
+          new = '''        RadioTransferId id=0;
+        if(!_ids.TryIssue([this](RadioTransferId candidate)noexcept{
+                return ActiveTransferId(candidate)||(_idLease&&_idLease.IsReserved(_idLease.Context,_domain,candidate));
+            },id))
+            return {RadioSchedulerStatus::ResourceUnavailable,0};
+'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = '''    RadioTransferSubmissionResult SubmitOwned(
+        IRadio& provider,const RadioAddress& destination,const RadioServiceProfile& profile,
+        const RadioTransferTiming& timing,const std::uint8_t* payload,std::size_t payloadBytes,
+        std::uint8_t fragmentCount,RadioOutboundWireMode wireMode,RadioClockFramePrepareTarget clockPrepare)noexcept{
+'''
+          new = '''    RadioTransferSubmissionResult SubmitOwned(
+        IRadio& provider,const RadioAddress& destination,const RadioServiceProfile& profile,
+        const RadioTransferTiming& timing,const std::uint8_t* payload,std::size_t payloadBytes,
+        std::uint8_t fragmentCount,RadioOutboundWireMode wireMode,RadioClockFramePrepareTarget clockPrepare,
+        std::uint64_t correlation)noexcept{
+'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = '''        const auto classIndex=ClassIndex(profile.Class);
+        if(classIndex>=RadioServiceClassCount||!_queues[classIndex].Push(std::move(lease)))
+            return {RadioSchedulerStatus::ResourceUnavailable,0};
+        Wake();return {RadioSchedulerStatus::Success,id};
+'''
+          new = '''        const auto classIndex=ClassIndex(profile.Class);
+        if(classIndex>=RadioServiceClassCount){
+            _ids.RememberCompleted(id);
+            return {RadioSchedulerStatus::ResourceUnavailable,0};
+        }
+        bool externallyReserved=false;
+        if(correlation!=0&&_idLease){
+            if(!_idLease.ReserveIssued(_idLease.Context,_domain,correlation,id)){
+                _ids.RememberCompleted(id);
+                return {RadioSchedulerStatus::ResourceUnavailable,0};
+            }
+            externallyReserved=true;
+        }
+        if(!_queues[classIndex].Push(std::move(lease))){
+            if(externallyReserved)_idLease.ReleaseIssued(_idLease.Context,_domain,correlation,id);
+            _ids.RememberCompleted(id);
+            return {RadioSchedulerStatus::ResourceUnavailable,0};
+        }
+        Wake();return {RadioSchedulerStatus::Success,id};
+'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = '''    RadioSchedulerStatus Initialize(IRadioTransferResultSink* resultSink={},RadioSchedulerWakeTarget wake={})noexcept{
+        if(_initialized)return RadioSchedulerStatus::Frozen;
+'''
+          new = '''    RadioSchedulerStatus BindTransferIdLeaseTarget(RadioTransferIdLeaseTarget target) noexcept {
+        if(_initialized)return RadioSchedulerStatus::Frozen;
+        _idLease=target;
+        return RadioSchedulerStatus::Success;
+    }
+
+    RadioSchedulerStatus Initialize(IRadioTransferResultSink* resultSink={},RadioSchedulerWakeTarget wake={})noexcept{
+        if(_initialized)return RadioSchedulerStatus::Frozen;
+'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = '''    RadioTransferSubmissionResult Submit(
+        IRadio& provider,const RadioAddress& destination,const RadioServiceProfile& profile,
+        const RadioTransferTiming& timing,const std::uint8_t* payload,std::size_t payloadBytes)noexcept{
+'''
+          new = '''    RadioTransferSubmissionResult Submit(
+        IRadio& provider,const RadioAddress& destination,const RadioServiceProfile& profile,
+        const RadioTransferTiming& timing,const std::uint8_t* payload,std::size_t payloadBytes,
+        std::uint64_t correlation=0)noexcept{
+'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = '''        return SubmitOwned(provider,destination,profile,timing,payload,payloadBytes,
+            static_cast<std::uint8_t>(fragmentCount),RadioOutboundWireMode::TransportV3,{});
+'''
+          new = '''        return SubmitOwned(provider,destination,profile,timing,payload,payloadBytes,
+            static_cast<std::uint8_t>(fragmentCount),RadioOutboundWireMode::TransportV3,{},correlation);
+'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = '''        return SubmitOwned(provider,destination,profile,timing,frameTemplate,frameBytes,1,
+            RadioOutboundWireMode::DirectPhysicalClock,prepare);
+'''
+          new = '''        return SubmitOwned(provider,destination,profile,timing,frameTemplate,frameBytes,1,
+            RadioOutboundWireMode::DirectPhysicalClock,prepare,0);
+'''
+          assert old in s
+          s = s.replace(old, new, 1)
+          scheduler.write_text(s)
+
+          runtime = Path('src/ESPressio_RadioRuntime.hpp')
+          r = runtime.read_text()
+          old = '''        RadioTransferSubmissionResult (*Submit)(
+            void*,IRadio&,const RadioAddress&,const RadioServiceProfile&,const RadioTransferTiming&,
+            const std::uint8_t*,std::size_t) noexcept{nullptr};
+'''
+          new = '''        RadioTransferSubmissionResult (*Submit)(
+            void*,IRadio&,const RadioAddress&,const RadioServiceProfile&,const RadioTransferTiming&,
+            const std::uint8_t*,std::size_t,std::uint64_t) noexcept{nullptr};
+'''
+          assert old in r
+          r = r.replace(old, new, 1)
+
+          old = '''    static RadioTransferSubmissionResult SubmitThunk(
+        void* context,IRadio& provider,const RadioAddress& destination,const RadioServiceProfile& profile,
+        const RadioTransferTiming& timing,const std::uint8_t* payload,std::size_t payloadBytes) noexcept {
+        return static_cast<TScheduler*>(context)->Submit(provider,destination,profile,timing,payload,payloadBytes);
+    }
+'''
+          new = '''    static RadioTransferSubmissionResult SubmitThunk(
+        void* context,IRadio& provider,const RadioAddress& destination,const RadioServiceProfile& profile,
+        const RadioTransferTiming& timing,const std::uint8_t* payload,std::size_t payloadBytes,
+        std::uint64_t correlation) noexcept {
+        return static_cast<TScheduler*>(context)->Submit(
+            provider,destination,profile,timing,payload,payloadBytes,correlation);
+    }
+'''
+          assert old in r
+          r = r.replace(old, new, 1)
+
+          old = '''    RadioTransferSubmissionResult SubmitDirect(
+        IRadio& provider,const RadioAddress& destination,const RadioServiceProfile& profile,
+        const RadioTransferTiming& timing,const std::uint8_t* payload,std::size_t payloadBytes) noexcept {
+'''
+          new = '''    RadioTransferSubmissionResult SubmitDirect(
+        IRadio& provider,const RadioAddress& destination,const RadioServiceProfile& profile,
+        const RadioTransferTiming& timing,const std::uint8_t* payload,std::size_t payloadBytes,
+        std::uint64_t correlation=0) noexcept {
+'''
+          assert old in r
+          r = r.replace(old, new, 1)
+
+          old = '''        RadioTransferSubmissionResult (*submit)(
+            void*,IRadio&,const RadioAddress&,const RadioServiceProfile&,const RadioTransferTiming&,
+            const std::uint8_t*,std::size_t) noexcept=nullptr;
+'''
+          new = '''        RadioTransferSubmissionResult (*submit)(
+            void*,IRadio&,const RadioAddress&,const RadioServiceProfile&,const RadioTransferTiming&,
+            const std::uint8_t*,std::size_t,std::uint64_t) noexcept=nullptr;
+'''
+          assert old in r
+          r = r.replace(old, new, 1)
+
+          old = '''        return submit(scheduler,provider,destination,profile,timing,payload,payloadBytes);
+'''
+          new = '''        return submit(scheduler,provider,destination,profile,timing,payload,payloadBytes,correlation);
+'''
+          assert old in r
+          r = r.replace(old, new, 1)
+
+          old = '''    RadioTransferSubmissionResult SubmitPeer(
+        RadioPeerHandle peer,const RadioServiceProfile& profile,const RadioTransferTiming& timing,
+        const std::uint8_t* payload,std::size_t payloadBytes) noexcept {
+'''
+          new = '''    RadioTransferSubmissionResult SubmitPeer(
+        RadioPeerHandle peer,const RadioServiceProfile& profile,const RadioTransferTiming& timing,
+        const std::uint8_t* payload,std::size_t payloadBytes,std::uint64_t correlation=0) noexcept {
+'''
+          assert old in r
+          r = r.replace(old, new, 1)
+
+          old = '''        return SubmitDirect(*binding.Interface,binding.Address,profile,timing,payload,payloadBytes);
+'''
+          new = '''        return SubmitDirect(*binding.Interface,binding.Address,profile,timing,payload,payloadBytes,correlation);
+'''
+          assert old in r
+          r = r.replace(old, new, 1)
+          runtime.write_text(r)
+          PY
+
+          git diff --check
+          git diff -- src/ESPressio_RadioScheduler.hpp src/ESPressio_RadioRuntime.hpp
+          git config user.name 'ESPressio Work Agent'
+          git config user.email 'actions@users.noreply.github.com'
+          git add src/ESPressio_RadioScheduler.hpp src/ESPressio_RadioRuntime.hpp
+          git commit -m 'Add bounded Radio transfer-id lease seam'
+          git push origin HEAD:primitives_redesign
