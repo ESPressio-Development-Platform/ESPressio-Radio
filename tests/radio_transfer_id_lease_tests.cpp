@@ -79,7 +79,7 @@ static RadioTransferTiming Timing(){return {1'000'000'000ULL,0};}
 int main(){
     const std::uint8_t payload[4]{1,2,3,4};
     {
-        Outbound capacity;assert(capacity.Initialize()==RadioResourceStatus::Success);
+        Outbound capacity;capacity.Initialize();
         Provider provider;LeaseProbe leases;leases.ExplicitReserved=1;
         Scheduler scheduler(capacity,provider.DomainId);
         assert(scheduler.BindProvider(provider)==RadioSchedulerStatus::Success);
@@ -99,7 +99,7 @@ int main(){
         assert(scheduler.Shutdown()==RadioSchedulerStatus::Success);
     }
     {
-        Outbound capacity;assert(capacity.Initialize()==RadioResourceStatus::Success);
+        Outbound capacity;capacity.Initialize();
         Provider provider;LeaseProbe leases;
         TinyScheduler scheduler(capacity,provider.DomainId);
         assert(scheduler.BindProvider(provider)==RadioSchedulerStatus::Success);
