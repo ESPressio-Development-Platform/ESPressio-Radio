@@ -111,7 +111,7 @@ class RadioRuntime final : public IRadioReassemblyReadySink {
         RadioSchedulerStatus (*BindProvider)(void*,IRadio&) noexcept{nullptr};
         RadioTransferSubmissionResult (*Submit)(
             void*,IRadio&,const RadioAddress&,const RadioServiceProfile&,const RadioTransferTiming&,
-            const std::uint8_t*,std::size_t) noexcept{nullptr};
+            const std::uint8_t*,std::size_t,std::uint64_t) noexcept{nullptr};
         void* Runtime{nullptr};
         RadioDomainRuntimeStatus (*InitializeRuntime)(void*,IRadioTransferResultSink*){nullptr};
         RadioDomainRuntimeStatus (*StartRuntime)(void*){nullptr};
@@ -148,8 +148,10 @@ class RadioRuntime final : public IRadioReassemblyReadySink {
     template<class TScheduler>
     static RadioTransferSubmissionResult SubmitThunk(
         void* context,IRadio& provider,const RadioAddress& destination,const RadioServiceProfile& profile,
-        const RadioTransferTiming& timing,const std::uint8_t* payload,std::size_t payloadBytes) noexcept {
-        return static_cast<TScheduler*>(context)->Submit(provider,destination,profile,timing,payload,payloadBytes);
+        const RadioTransferTiming& timing,const std::uint8_t* payload,std::size_t payloadBytes,
+        std::uint64_t correlation) noexcept {
+        return static_cast<TScheduler*>(context)->Submit(
+            provider,destination,profile,timing,payload,payloadBytes,correlation);
     }
     template<class TDomainRuntime>
     static RadioDomainRuntimeStatus InitializeRuntimeThunk(void* context,IRadioTransferResultSink* sink) {
@@ -337,11 +339,12 @@ public:
 
     RadioTransferSubmissionResult SubmitDirect(
         IRadio& provider,const RadioAddress& destination,const RadioServiceProfile& profile,
-        const RadioTransferTiming& timing,const std::uint8_t* payload,std::size_t payloadBytes) noexcept {
+        const RadioTransferTiming& timing,const std::uint8_t* payload,std::size_t payloadBytes,
+        std::uint64_t correlation=0) noexcept {
         void* scheduler=nullptr;
         RadioTransferSubmissionResult (*submit)(
             void*,IRadio&,const RadioAddress&,const RadioServiceProfile&,const RadioTransferTiming&,
-            const std::uint8_t*,std::size_t) noexcept=nullptr;
+            const std::uint8_t*,std::size_t,std::uint64_t) noexcept=nullptr;
         {
             std::lock_guard<System::Synchronization::Mutex> lock(_mutex);
             if(!_running) return {RadioSchedulerStatus::NotInitialized,0};
@@ -351,12 +354,12 @@ public:
             scheduler=_domains[domainIndex].Scheduler;
             submit=_domains[domainIndex].Submit;
         }
-        return submit(scheduler,provider,destination,profile,timing,payload,payloadBytes);
+        return submit(scheduler,provider,destination,profile,timing,payload,payloadBytes,correlation);
     }
 
     RadioTransferSubmissionResult SubmitPeer(
         RadioPeerHandle peer,const RadioServiceProfile& profile,const RadioTransferTiming& timing,
-        const std::uint8_t* payload,std::size_t payloadBytes) noexcept {
+        const std::uint8_t* payload,std::size_t payloadBytes,std::uint64_t correlation=0) noexcept {
         RadioPeerBinding binding{};
         {
             std::lock_guard<System::Synchronization::Mutex> lock(_mutex);
@@ -365,7 +368,7 @@ public:
             if(!resolved) return {RadioSchedulerStatus::InvalidConfiguration,0};
             binding=*resolved;
         }
-        return SubmitDirect(*binding.Interface,binding.Address,profile,timing,payload,payloadBytes);
+        return SubmitDirect(*binding.Interface,binding.Address,profile,timing,payload,payloadBytes,correlation);
     }
 
     RadioReassemblyStatus TakeInbound(

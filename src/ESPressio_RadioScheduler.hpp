@@ -45,6 +45,23 @@ struct RadioSchedulerWakeTarget final {
     void (*Wake)(void*) noexcept{nullptr};
 };
 
+/// <summary>Optional family-neutral external lease over scheduler-local transfer identifiers.</summary>
+/// <remarks>
+/// A composition may reserve an issued transport identifier beyond Radio's own terminal result when a higher transport
+/// protocol still has bounded evidence outstanding. Radio owns no meaning for Correlation and never interprets the
+/// external lease as Primitive admission. All callbacks execute while the scheduler mutation lock is held and therefore
+/// must be bounded and nonblocking.
+/// </remarks>
+struct RadioTransferIdLeaseTarget final {
+    void* Context{nullptr};
+    bool (*IsReserved)(void*,RadioContentionDomainId,RadioTransferId) noexcept{nullptr};
+    bool (*ReserveIssued)(void*,RadioContentionDomainId,std::uint64_t,RadioTransferId) noexcept{nullptr};
+    void (*ReleaseIssued)(void*,RadioContentionDomainId,std::uint64_t,RadioTransferId) noexcept{nullptr};
+    constexpr explicit operator bool() const noexcept {
+        return Context&&IsReserved&&ReserveIssued&&ReleaseIssued;
+    }
+};
+
 enum class RadioSchedulerStatus : std::uint8_t {
     Success = 0,
     Busy,
@@ -199,6 +216,7 @@ class RadioDomainScheduler final : public IRadioRuntimeSink {
     RadioTransferIdIssuer<TRecentTransferIds> _ids{};
     IRadioTransferResultSink* _resultSink{nullptr};
     RadioSchedulerWakeTarget _wake{};
+    RadioTransferIdLeaseTarget _idLease{};
     System::Synchronization::Mutex _mutex;
     std::array<std::uint8_t,TPhysicalScratchBytes> _scratch{};
     bool _initialized{false};
@@ -459,11 +477,14 @@ class RadioDomainScheduler final : public IRadioRuntimeSink {
     RadioTransferSubmissionResult SubmitOwned(
         IRadio& provider,const RadioAddress& destination,const RadioServiceProfile& profile,
         const RadioTransferTiming& timing,const std::uint8_t* payload,std::size_t payloadBytes,
-        std::uint8_t fragmentCount,RadioOutboundWireMode wireMode,RadioClockFramePrepareTarget clockPrepare)noexcept{
+        std::uint8_t fragmentCount,RadioOutboundWireMode wireMode,RadioClockFramePrepareTarget clockPrepare,
+        std::uint64_t correlation)noexcept{
         std::unique_lock<System::Synchronization::Mutex> lock(_mutex,std::try_to_lock);
         if(!lock.owns_lock())return {RadioSchedulerStatus::Busy,0};
         RadioTransferId id=0;
-        if(!_ids.TryIssue([this](RadioTransferId candidate)noexcept{return ActiveTransferId(candidate);},id))
+        if(!_ids.TryIssue([this](RadioTransferId candidate)noexcept{
+                return ActiveTransferId(candidate)||(_idLease&&_idLease.IsReserved(_idLease.Context,_domain,candidate));
+            },id))
             return {RadioSchedulerStatus::ResourceUnavailable,0};
         RadioCapacityReservation reservation;
         const auto reserved=_capacity->TryAcquireTrusted(profile.Class,payloadBytes,reservation);
@@ -477,8 +498,23 @@ class RadioDomainScheduler final : public IRadioRuntimeSink {
             std::move(reservation),lease,&provider,destination,id,profile,timing,fragmentCount,wireMode,clockPrepare);
         if(built!=RadioResourceStatus::Success)return {RadioSchedulerStatus::ResourceUnavailable,0};
         const auto classIndex=ClassIndex(profile.Class);
-        if(classIndex>=RadioServiceClassCount||!_queues[classIndex].Push(std::move(lease)))
+        if(classIndex>=RadioServiceClassCount){
+            _ids.RememberCompleted(id);
             return {RadioSchedulerStatus::ResourceUnavailable,0};
+        }
+        bool externallyReserved=false;
+        if(correlation!=0&&_idLease){
+            if(!_idLease.ReserveIssued(_idLease.Context,_domain,correlation,id)){
+                _ids.RememberCompleted(id);
+                return {RadioSchedulerStatus::ResourceUnavailable,0};
+            }
+            externallyReserved=true;
+        }
+        if(!_queues[classIndex].Push(std::move(lease))){
+            if(externallyReserved)_idLease.ReleaseIssued(_idLease.Context,_domain,correlation,id);
+            _ids.RememberCompleted(id);
+            return {RadioSchedulerStatus::ResourceUnavailable,0};
+        }
         Wake();return {RadioSchedulerStatus::Success,id};
     }
 
@@ -494,6 +530,12 @@ public:
         if(!provider.ProviderResources().HasFiniteIngressService())return RadioSchedulerStatus::InvalidConfiguration;
         _providers[_providerCount++]=&provider;return RadioSchedulerStatus::Success;
     }
+    RadioSchedulerStatus BindTransferIdLeaseTarget(RadioTransferIdLeaseTarget target) noexcept {
+        if(_initialized)return RadioSchedulerStatus::Frozen;
+        _idLease=target;
+        return RadioSchedulerStatus::Success;
+    }
+
     RadioSchedulerStatus Initialize(IRadioTransferResultSink* resultSink={},RadioSchedulerWakeTarget wake={})noexcept{
         if(_initialized)return RadioSchedulerStatus::Frozen;
         if(!_domain||_providerCount==0)return RadioSchedulerStatus::InvalidConfiguration;
@@ -505,7 +547,8 @@ public:
 
     RadioTransferSubmissionResult Submit(
         IRadio& provider,const RadioAddress& destination,const RadioServiceProfile& profile,
-        const RadioTransferTiming& timing,const std::uint8_t* payload,std::size_t payloadBytes)noexcept{
+        const RadioTransferTiming& timing,const std::uint8_t* payload,std::size_t payloadBytes,
+        std::uint64_t correlation=0)noexcept{
         if(!_initialized)return {RadioSchedulerStatus::NotInitialized,0};
         if(_stopping||!ProviderBound(provider)||!profile.IsValid()||!timing.IsValidFor(profile)||
            !destination.IsValid()||(payloadBytes!=0&&payload==nullptr)||payloadBytes==0)
@@ -525,7 +568,7 @@ public:
             if(!probe.SupportsPromotableDeadline())return {RadioSchedulerStatus::InvalidConfiguration,0};
         }
         return SubmitOwned(provider,destination,profile,timing,payload,payloadBytes,
-            static_cast<std::uint8_t>(fragmentCount),RadioOutboundWireMode::TransportV3,{});
+            static_cast<std::uint8_t>(fragmentCount),RadioOutboundWireMode::TransportV3,{},correlation);
     }
 
     /// <summary>Queues one certified direct-neighbour Clock frame in the normal Clock Q1/R3 path.</summary>
@@ -549,7 +592,7 @@ public:
             if(!probe.SupportsPromotableDeadline())return {RadioSchedulerStatus::InvalidConfiguration,0};
         }
         return SubmitOwned(provider,destination,profile,timing,frameTemplate,frameBytes,1,
-            RadioOutboundWireMode::DirectPhysicalClock,prepare);
+            RadioOutboundWireMode::DirectPhysicalClock,prepare,0);
     }
 
     RadioSchedulerServiceResult Service(std::uint64_t now)noexcept{
