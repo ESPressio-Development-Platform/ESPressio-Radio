@@ -146,12 +146,30 @@ class RadioRuntime final : public IRadioReassemblyReadySink {
         return static_cast<TScheduler*>(context)->BindProvider(provider);
     }
     template<class TScheduler>
+    static auto SubmitScheduler(
+        TScheduler& scheduler,IRadio& provider,const RadioAddress& destination,const RadioServiceProfile& profile,
+        const RadioTransferTiming& timing,const std::uint8_t* payload,std::size_t payloadBytes,
+        std::uint64_t correlation,int) noexcept
+        -> decltype(scheduler.Submit(provider,destination,profile,timing,payload,payloadBytes,correlation)) {
+        return scheduler.Submit(provider,destination,profile,timing,payload,payloadBytes,correlation);
+    }
+
+    template<class TScheduler>
+    static RadioTransferSubmissionResult SubmitScheduler(
+        TScheduler& scheduler,IRadio& provider,const RadioAddress& destination,const RadioServiceProfile& profile,
+        const RadioTransferTiming& timing,const std::uint8_t* payload,std::size_t payloadBytes,
+        std::uint64_t correlation,long) noexcept {
+        if(correlation!=0)return {RadioSchedulerStatus::InvalidConfiguration,0};
+        return scheduler.Submit(provider,destination,profile,timing,payload,payloadBytes);
+    }
+
+    template<class TScheduler>
     static RadioTransferSubmissionResult SubmitThunk(
         void* context,IRadio& provider,const RadioAddress& destination,const RadioServiceProfile& profile,
         const RadioTransferTiming& timing,const std::uint8_t* payload,std::size_t payloadBytes,
         std::uint64_t correlation) noexcept {
-        return static_cast<TScheduler*>(context)->Submit(
-            provider,destination,profile,timing,payload,payloadBytes,correlation);
+        return SubmitScheduler(*static_cast<TScheduler*>(context),provider,destination,profile,timing,
+            payload,payloadBytes,correlation,0);
     }
     template<class TDomainRuntime>
     static RadioDomainRuntimeStatus InitializeRuntimeThunk(void* context,IRadioTransferResultSink* sink) {
