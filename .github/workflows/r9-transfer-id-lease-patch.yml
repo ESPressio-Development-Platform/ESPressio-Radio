@@ -1,5 +1,6 @@
 name: R9 transfer-id lease seam patch
 
+# One-shot structural patch helper; remove immediately after source commit.
 on:
   push:
     branches: [primitives_redesign]
@@ -67,19 +68,6 @@ struct RadioTransferIdLeaseTarget final {
           assert old in s
           s = s.replace(old, new, 1)
 
-          old = '''        RadioTransferId id=0;
-        if(!_ids.TryIssue([this](RadioTransferId candidate)noexcept{return ActiveTransferId(candidate);},id))
-            return {RadioSchedulerStatus::ResourceUnavailable,0};
-'''
-          new = '''        RadioTransferId id=0;
-        if(!_ids.TryIssue([this](RadioTransferId candidate)noexcept{
-                return ActiveTransferId(candidate)||(_idLease&&_idLease.IsReserved(_idLease.Context,_domain,candidate));
-            },id))
-            return {RadioSchedulerStatus::ResourceUnavailable,0};
-'''
-          assert old in s
-          s = s.replace(old, new, 1)
-
           old = '''    RadioTransferSubmissionResult SubmitOwned(
         IRadio& provider,const RadioAddress& destination,const RadioServiceProfile& profile,
         const RadioTransferTiming& timing,const std::uint8_t* payload,std::size_t payloadBytes,
@@ -90,6 +78,19 @@ struct RadioTransferIdLeaseTarget final {
         const RadioTransferTiming& timing,const std::uint8_t* payload,std::size_t payloadBytes,
         std::uint8_t fragmentCount,RadioOutboundWireMode wireMode,RadioClockFramePrepareTarget clockPrepare,
         std::uint64_t correlation)noexcept{
+'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = '''        RadioTransferId id=0;
+        if(!_ids.TryIssue([this](RadioTransferId candidate)noexcept{return ActiveTransferId(candidate);},id))
+            return {RadioSchedulerStatus::ResourceUnavailable,0};
+'''
+          new = '''        RadioTransferId id=0;
+        if(!_ids.TryIssue([this](RadioTransferId candidate)noexcept{
+                return ActiveTransferId(candidate)||(_idLease&&_idLease.IsReserved(_idLease.Context,_domain,candidate));
+            },id))
+            return {RadioSchedulerStatus::ResourceUnavailable,0};
 '''
           assert old in s
           s = s.replace(old, new, 1)
