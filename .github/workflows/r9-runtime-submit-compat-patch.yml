@@ -19,49 +19,8 @@ jobs:
       - name: Patch scheduler submit compatibility
         shell: bash
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p=Path('src/ESPressio_RadioRuntime.hpp')
-          s=p.read_text()
-          old='''    template<class TScheduler>
-    static RadioTransferSubmissionResult SubmitThunk(
-        void* context,IRadio& provider,const RadioAddress& destination,const RadioServiceProfile& profile,
-        const RadioTransferTiming& timing,const std::uint8_t* payload,std::size_t payloadBytes,
-        std::uint64_t correlation) noexcept {
-        return static_cast<TScheduler*>(context)->Submit(
-            provider,destination,profile,timing,payload,payloadBytes,correlation);
-    }
-'''
-          new='''    template<class TScheduler>
-    static auto SubmitScheduler(
-        TScheduler& scheduler,IRadio& provider,const RadioAddress& destination,const RadioServiceProfile& profile,
-        const RadioTransferTiming& timing,const std::uint8_t* payload,std::size_t payloadBytes,
-        std::uint64_t correlation,int) noexcept
-        -> decltype(scheduler.Submit(provider,destination,profile,timing,payload,payloadBytes,correlation)) {
-        return scheduler.Submit(provider,destination,profile,timing,payload,payloadBytes,correlation);
-    }
-
-    template<class TScheduler>
-    static RadioTransferSubmissionResult SubmitScheduler(
-        TScheduler& scheduler,IRadio& provider,const RadioAddress& destination,const RadioServiceProfile& profile,
-        const RadioTransferTiming& timing,const std::uint8_t* payload,std::size_t payloadBytes,
-        std::uint64_t correlation,long) noexcept {
-        if(correlation!=0)return {RadioSchedulerStatus::InvalidConfiguration,0};
-        return scheduler.Submit(provider,destination,profile,timing,payload,payloadBytes);
-    }
-
-    template<class TScheduler>
-    static RadioTransferSubmissionResult SubmitThunk(
-        void* context,IRadio& provider,const RadioAddress& destination,const RadioServiceProfile& profile,
-        const RadioTransferTiming& timing,const std::uint8_t* payload,std::size_t payloadBytes,
-        std::uint64_t correlation) noexcept {
-        return SubmitScheduler(*static_cast<TScheduler*>(context),provider,destination,profile,timing,
-            payload,payloadBytes,correlation,0);
-    }
-'''
-          assert old in s
-          p.write_text(s.replace(old,new,1))
-          PY
+          echo 'ZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCnA9UGF0aCgic3JjL0VTUHJlc3Npb19SYWRpb1J1bnRpbWUuaHBwIikKcz1wLnJlYWRfdGV4dCgpCm9sZD0iIiIgICAgdGVtcGxhdGU8Y2xhc3MgVFNjaGVkdWxlcj4KICAgIHN0YXRpYyBSYWRpb1RyYW5zZmVyU3VibWlzc2lvblJlc3VsdCBTdWJtaXRUaHVuaygKICAgICAgICB2b2lkKiBjb250ZXh0LElSYWRpbyYgcHJvdmlkZXIsY29uc3QgUmFkaW9BZGRyZXNzJiBkZXN0aW5hdGlvbixjb25zdCBSYWRpb1NlcnZpY2VQcm9maWxlJiBwcm9maWxlLAogICAgICAgIGNvbnN0IFJhZGlvVHJhbnNmZXJUaW1pbmcmIHRpbWluZyxjb25zdCBzdGQ6OnVpbnQ4X3QqIHBheWxvYWQsc3RkOjpzaXplX3QgcGF5bG9hZEJ5dGVzLAogICAgICAgIHN0ZDo6dWludDY0X3QgY29ycmVsYXRpb24pIG5vZXhjZXB0IHsKICAgICAgICByZXR1cm4gc3RhdGljX2Nhc3Q8VFNjaGVkdWxlcio+KGNvbnRleHQpLT5TdWJtaXQoCiAgICAgICAgICAgIHByb3ZpZGVyLGRlc3RpbmF0aW9uLHByb2ZpbGUsdGltaW5nLHBheWxvYWQscGF5bG9hZEJ5dGVzLGNvcnJlbGF0aW9uKTsKICAgIH0KIiIiCm5ldz0iIiIgICAgdGVtcGxhdGU8Y2xhc3MgVFNjaGVkdWxlcj4KICAgIHN0YXRpYyBhdXRvIFN1Ym1pdFNjaGVkdWxlcigKICAgICAgICBUU2NoZWR1bGVyJiBzY2hlZHVsZXIsSVJhZGlvJiBwcm92aWRlcixjb25zdCBSYWRpb0FkZHJlc3MmIGRlc3RpbmF0aW9uLGNvbnN0IFJhZGlvU2VydmljZVByb2ZpbGUmIHByb2ZpbGUsCiAgICAgICAgY29uc3QgUmFkaW9UcmFuc2ZlclRpbWluZyYgdGltaW5nLGNvbnN0IHN0ZDo6dWludDhfdCogcGF5bG9hZCxzdGQ6OnNpemVfdCBwYXlsb2FkQnl0ZXMsCiAgICAgICAgc3RkOjp1aW50NjRfdCBjb3JyZWxhdGlvbixpbnQpIG5vZXhjZXB0CiAgICAgICAgLT4gZGVjbHR5cGUoc2NoZWR1bGVyLlN1Ym1pdChwcm92aWRlcixkZXN0aW5hdGlvbixwcm9maWxlLHRpbWluZyxwYXlsb2FkLHBheWxvYWRCeXRlcyxjb3JyZWxhdGlvbikpIHsKICAgICAgICByZXR1cm4gc2NoZWR1bGVyLlN1Ym1pdChwcm92aWRlcixkZXN0aW5hdGlvbixwcm9maWxlLHRpbWluZyxwYXlsb2FkLHBheWxvYWRCeXRlcyxjb3JyZWxhdGlvbik7CiAgICB9CgogICAgdGVtcGxhdGU8Y2xhc3MgVFNjaGVkdWxlcj4KICAgIHN0YXRpYyBSYWRpb1RyYW5zZmVyU3VibWlzc2lvblJlc3VsdCBTdWJtaXRTY2hlZHVsZXIoCiAgICAgICAgVFNjaGVkdWxlciYgc2NoZWR1bGVyLElSYWRpbyYgcHJvdmlkZXIsY29uc3QgUmFkaW9BZGRyZXNzJiBkZXN0aW5hdGlvbixjb25zdCBSYWRpb1NlcnZpY2VQcm9maWxlJiBwcm9maWxlLAogICAgICAgIGNvbnN0IFJhZGlvVHJhbnNmZXJUaW1pbmcmIHRpbWluZyxjb25zdCBzdGQ6OnVpbnQ4X3QqIHBheWxvYWQsc3RkOjpzaXplX3QgcGF5bG9hZEJ5dGVzLAogICAgICAgIHN0ZDo6dWludDY0X3QgY29ycmVsYXRpb24sbG9uZykgbm9leGNlcHQgewogICAgICAgIGlmKGNvcnJlbGF0aW9uIT0wKXJldHVybiB7UmFkaW9TY2hlZHVsZXJTdGF0dXM6OkludmFsaWRDb25maWd1cmF0aW9uLDB9OwogICAgICAgIHJldHVybiBzY2hlZHVsZXIuU3VibWl0KHByb3ZpZGVyLGRlc3RpbmF0aW9uLHByb2ZpbGUsdGltaW5nLHBheWxvYWQscGF5bG9hZEJ5dGVzKTsKICAgIH0KCiAgICB0ZW1wbGF0ZTxjbGFzcyBUU2NoZWR1bGVyPgogICAgc3RhdGljIFJhZGlvVHJhbnNmZXJTdWJtaXNzaW9uUmVzdWx0IFN1Ym1pdFRodW5rKAogICAgICAgIHZvaWQqIGNvbnRleHQsSVJhZGlvJiBwcm92aWRlcixjb25zdCBSYWRpb0FkZHJlc3MmIGRlc3RpbmF0aW9uLGNvbnN0IFJhZGlvU2VydmljZVByb2ZpbGUmIHByb2ZpbGUsCiAgICAgICAgY29uc3QgUmFkaW9UcmFuc2ZlclRpbWluZyYgdGltaW5nLGNvbnN0IHN0ZDo6dWludDhfdCogcGF5bG9hZCxzdGQ6OnNpemVfdCBwYXlsb2FkQnl0ZXMsCiAgICAgICAgc3RkOjp1aW50NjRfdCBjb3JyZWxhdGlvbikgbm9leGNlcHQgewogICAgICAgIHJldHVybiBTdWJtaXRTY2hlZHVsZXIoKnN0YXRpY19jYXN0PFRTY2hlZHVsZXIqPihjb250ZXh0KSxwcm92aWRlcixkZXN0aW5hdGlvbixwcm9maWxlLHRpbWluZywKICAgICAgICAgICAgcGF5bG9hZCxwYXlsb2FkQnl0ZXMsY29ycmVsYXRpb24sMCk7CiAgICB9CiIiIgphc3NlcnQgb2xkIGluIHMKcC53cml0ZV90ZXh0KHMucmVwbGFjZShvbGQsbmV3LDEpKQo=' | base64 -d > /tmp/r9_runtime_compat.py
+          python3 /tmp/r9_runtime_compat.py
           git diff --check
           git config user.name 'ESPressio Work Agent'
           git config user.email 'actions@users.noreply.github.com'
