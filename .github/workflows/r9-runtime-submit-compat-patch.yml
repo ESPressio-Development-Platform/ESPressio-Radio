@@ -1,0 +1,70 @@
+name: R9 runtime submit compatibility patch
+
+on:
+  push:
+    branches: [primitives_redesign]
+    paths:
+      - .github/workflows/r9-runtime-submit-compat-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: primitives_redesign
+      - name: Patch scheduler submit compatibility
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('src/ESPressio_RadioRuntime.hpp')
+          s=p.read_text()
+          old='''    template<class TScheduler>
+    static RadioTransferSubmissionResult SubmitThunk(
+        void* context,IRadio& provider,const RadioAddress& destination,const RadioServiceProfile& profile,
+        const RadioTransferTiming& timing,const std::uint8_t* payload,std::size_t payloadBytes,
+        std::uint64_t correlation) noexcept {
+        return static_cast<TScheduler*>(context)->Submit(
+            provider,destination,profile,timing,payload,payloadBytes,correlation);
+    }
+'''
+          new='''    template<class TScheduler>
+    static auto SubmitScheduler(
+        TScheduler& scheduler,IRadio& provider,const RadioAddress& destination,const RadioServiceProfile& profile,
+        const RadioTransferTiming& timing,const std::uint8_t* payload,std::size_t payloadBytes,
+        std::uint64_t correlation,int) noexcept
+        -> decltype(scheduler.Submit(provider,destination,profile,timing,payload,payloadBytes,correlation)) {
+        return scheduler.Submit(provider,destination,profile,timing,payload,payloadBytes,correlation);
+    }
+
+    template<class TScheduler>
+    static RadioTransferSubmissionResult SubmitScheduler(
+        TScheduler& scheduler,IRadio& provider,const RadioAddress& destination,const RadioServiceProfile& profile,
+        const RadioTransferTiming& timing,const std::uint8_t* payload,std::size_t payloadBytes,
+        std::uint64_t correlation,long) noexcept {
+        if(correlation!=0)return {RadioSchedulerStatus::InvalidConfiguration,0};
+        return scheduler.Submit(provider,destination,profile,timing,payload,payloadBytes);
+    }
+
+    template<class TScheduler>
+    static RadioTransferSubmissionResult SubmitThunk(
+        void* context,IRadio& provider,const RadioAddress& destination,const RadioServiceProfile& profile,
+        const RadioTransferTiming& timing,const std::uint8_t* payload,std::size_t payloadBytes,
+        std::uint64_t correlation) noexcept {
+        return SubmitScheduler(*static_cast<TScheduler*>(context),provider,destination,profile,timing,
+            payload,payloadBytes,correlation,0);
+    }
+'''
+          assert old in s
+          p.write_text(s.replace(old,new,1))
+          PY
+          git diff --check
+          git config user.name 'ESPressio Work Agent'
+          git config user.email 'actions@users.noreply.github.com'
+          git add src/ESPressio_RadioRuntime.hpp
+          git commit -m 'Preserve legacy scheduler submit compatibility'
+          git push origin HEAD:primitives_redesign
