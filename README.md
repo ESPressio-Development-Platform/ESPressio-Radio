@@ -123,8 +123,9 @@ Current provider evidence boundaries are deliberately conservative:
 - ESP32 Raw80211 uses managed finite ingress and real ESP-IDF raw-TX completion, but its present receive timing remains **Estimated** until a conservative physical capture bound is established.
 - ESP32 BLE legacy advertising is broadcast-only, has a 26-byte opaque v3-capable payload, and does not claim Clock-qualified timing.
 - nRF24 provides synchronous terminal TX and genuine unicast link ACK evidence, but does not currently provide a bounded Clock receive timestamp.
+- ESP-NOW uses bounded callback capture and deferred native send completion. Its default receive timing is **Estimated**; finite-bounded K1/K2 evidence is available only when composition supplies `ESPNowRadioTimingCapture` with a conservative callback-boundary uncertainty. Successful unicast MAC completion is direct-link acknowledgement only, never Primitive admission.
 
-Therefore Tranche 7 establishes the architecture required for sub-millisecond synchronization, but does **not** claim that those concrete providers have all completed physical characterization/certification.
+Therefore Tranche 7/9 establishes the architecture required for sub-millisecond synchronization, but does **not** claim that every concrete provider has completed physical characterization/certification.
 
 ## Concrete providers
 
@@ -132,9 +133,10 @@ Concrete implementations live with their platform/technology owner:
 
 - `ESPressio-ESP32` — Raw80211 and BLE;
 - `ESPressio-NRF24` — nRF24L01/nRF24L01+;
+- `ESPressio-ESP-Now` — ESP32 ESP-NOW physical provider;
 - later physical providers implement the same managed `IRadio` contract.
 
-ESP32 Raw80211 and ordinary Wi-Fi share one physical Wi-Fi PHY. Channel/readiness/power-state coordination therefore remains in ESPressio-ESP32, not in portable Radio.
+ESP32 Raw80211, ESP-NOW and ordinary Wi-Fi share one physical Wi-Fi PHY. Their contention-domain/channel/readiness/power-state coordination must therefore reflect the shared hardware rather than modelling them as independent media.
 
 ## Direct dependencies
 
