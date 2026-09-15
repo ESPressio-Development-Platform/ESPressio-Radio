@@ -70,12 +70,21 @@ int main(){
     assert(table.Accept(provider,packet,transfer2Conflict,6'000'000,true)==RadioReassemblyStatus::Malformed);
     assert(table.Accept(provider,packet,transfer2,7'000'000,true)==RadioReassemblyStatus::Accepted);
 
-    // Untrusted traffic occupies quarantine only and cannot be handed upward until promoted.
+    // Untrusted traffic occupies quarantine only. A higher trust layer gets a bounded copy for validation, not a lease
+    // or pointer into Radio-owned bytes; protected capacity is still unavailable until explicit validated promotion.
     auto untrusted0=MakeFragment(3,0,2,20,source,RadioServiceClass::Critical,100,logical.data(),15,wire0);
     auto untrusted1=MakeFragment(3,1,2,20,source,RadioServiceClass::Critical,90,logical.data()+15,5,wire1);
     assert(table.Accept(provider,packet,untrusted0,10'000'000,false)==RadioReassemblyStatus::Accepted);
     assert(table.Accept(provider,packet,untrusted1,11'000'000,false)==RadioReassemblyStatus::Complete);
     RadioCompletedReassembly blocked;
+    assert(table.TakeCompleteTrusted(provider,source,3,blocked)==RadioReassemblyStatus::NotTrusted);
+    std::array<std::uint8_t,19> tooSmall{};std::size_t copied=99;RadioServiceClass claimed=RadioServiceClass::Invalid;
+    assert(table.CopyCompleteForValidation(provider,source,3,tooSmall.data(),tooSmall.size(),copied,claimed)==RadioReassemblyStatus::BufferTooSmall);
+    assert(copied==0&&claimed==RadioServiceClass::Critical);
+    std::array<std::uint8_t,20> validation{};
+    assert(table.CopyCompleteForValidation(provider,source,3,validation.data(),validation.size(),copied,claimed)==RadioReassemblyStatus::Complete);
+    assert(copied==logical.size()&&claimed==RadioServiceClass::Critical);
+    for(std::size_t i=0;i<logical.size();++i)assert(validation[i]==logical[i]);
     assert(table.TakeCompleteTrusted(provider,source,3,blocked)==RadioReassemblyStatus::NotTrusted);
     assert(table.PromoteCompleted(provider,source,3,RadioServiceClass::Critical)==RadioReassemblyStatus::Complete);
     assert(table.TakeCompleteTrusted(provider,source,3,blocked)==RadioReassemblyStatus::Complete);
