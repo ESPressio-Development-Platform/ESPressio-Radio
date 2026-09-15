@@ -23,6 +23,7 @@ enum class RadioReassemblyStatus : std::uint8_t {
     RecentlyCompleted,
     Busy,
     ResourceUnavailable,
+    BufferTooSmall,
     Malformed,
     Expired,
     NotFound,
@@ -267,6 +268,40 @@ public:
         const auto free=FreeSlot();
         if(free==_active.size()) return RadioReassemblyStatus::ResourceUnavailable;
         return Start(free,provider,packet,fragment,now,trusted);
+    }
+
+    /// <summary>
+    /// Copies one complete logical transfer into caller-owned bounded storage without changing its Q1 ownership domain.
+    /// </summary>
+    /// <remarks>
+    /// This is the validation seam for quarantined traffic. The copy occurs while the reassembly gate is held so expiry
+    /// cannot invalidate the source bytes. The caller must authenticate/authorize the copy independently and then call
+    /// PromoteCompleted() with the validated service class before TakeCompleteTrusted() may transfer ownership upward.
+    /// No pointer into Radio-owned quarantine storage escapes this call.
+    /// </remarks>
+    RadioReassemblyStatus CopyCompleteForValidation(
+        IRadio& provider,
+        const RadioAddress& source,
+        RadioTransferId transferId,
+        std::uint8_t* output,
+        std::size_t capacity,
+        std::size_t& bytesCopied,
+        RadioServiceClass& claimedService) noexcept {
+        bytesCopied=0;
+        claimedService=RadioServiceClass::Invalid;
+        std::unique_lock<System::Synchronization::Mutex> lock(_mutex,std::try_to_lock);
+        if(!lock.owns_lock()) return RadioReassemblyStatus::Busy;
+        const auto index=Find(provider,source,transferId);
+        if(index==_active.size()) return RadioReassemblyStatus::NotFound;
+        const auto& record=_active[index].template Get<RadioReassemblyRecord>();
+        if(!record.IsComplete()) return RadioReassemblyStatus::NotFound;
+        const auto view=record.Bytes.View();
+        if(view.Size!=record.LogicalPayloadBytes) return RadioReassemblyStatus::Malformed;
+        claimedService=record.Service;
+        if(capacity<view.Size || (view.Size!=0 && output==nullptr)) return RadioReassemblyStatus::BufferTooSmall;
+        if(view.Size!=0) std::memcpy(output,view.Data,view.Size);
+        bytesCopied=view.Size;
+        return RadioReassemblyStatus::Complete;
     }
 
     RadioReassemblyStatus PromoteCompleted(
