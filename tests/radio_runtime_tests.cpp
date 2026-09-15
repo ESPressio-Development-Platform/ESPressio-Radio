@@ -11,6 +11,7 @@ struct FakeReassembly final {
     std::size_t ExpireCalls{0};
     std::size_t ValidationCopies{0};
     std::size_t Promotions{0};
+    std::size_t Discards{0};
     RadioReassemblyStatus Accept(IRadio&,const RadioPacketView&,const RadioTransportV3FragmentView&,std::uint64_t,bool) noexcept {
         return RadioReassemblyStatus::Accepted;
     }
@@ -23,6 +24,9 @@ struct FakeReassembly final {
         for(std::size_t i=0;i<sizeof(payload);++i) output[i]=payload[i];
         bytesCopied=sizeof(payload);++ValidationCopies;
         return RadioReassemblyStatus::Complete;
+    }
+    RadioReassemblyStatus DiscardComplete(IRadio&,const RadioAddress&,RadioTransferId) noexcept {
+        ++Discards;return RadioReassemblyStatus::Complete;
     }
     RadioReassemblyStatus TakeCompleteTrusted(IRadio&,const RadioAddress&,RadioTransferId,RadioCompletedReassembly&) noexcept {
         return RadioReassemblyStatus::Complete;
@@ -127,8 +131,12 @@ int main(){
     RadioCompletedReassembly taken;
     assert(runtime.TakeInbound(ready.Last,taken)==RadioReassemblyStatus::Complete);
 
-    runtime.RadioReassemblyReady(provider,peerAddress,12,RadioServiceClass::Critical,true);
-    assert(ready.Count==2&&ready.Last.TransferId==12&&ready.Last.IsTrusted());
+    runtime.RadioReassemblyReady(provider,peerAddress,12,RadioServiceClass::Infrastructure,false);
+    assert(ready.Count==2&&ready.Last.TransferId==12&&ready.Last.IsQuarantined());
+    assert(runtime.DiscardInbound(ready.Last)==RadioReassemblyStatus::Complete&&reassembly.Discards==1);
+
+    runtime.RadioReassemblyReady(provider,peerAddress,13,RadioServiceClass::Critical,true);
+    assert(ready.Count==3&&ready.Last.TransferId==13&&ready.Last.IsTrusted());
 
     assert(runtime.Shutdown()==RadioRuntimeStatus::Success);
     assert(!runtime.IsRunning()&&!provider.Started&&provider.Receiver==nullptr);
