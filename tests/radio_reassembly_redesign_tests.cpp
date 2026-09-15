@@ -91,6 +91,18 @@ int main(){
     assert(blocked.Payload().Size==20);
     blocked.Reset();
 
+    // A complete quarantined record may be copied and then explicitly discarded without ever entering trusted capacity.
+    auto discard0=MakeFragment(5,0,2,20,source,RadioServiceClass::Infrastructure,100,logical.data(),15,wire0);
+    auto discard1=MakeFragment(5,1,2,20,source,RadioServiceClass::Infrastructure,100,logical.data()+15,5,wire1);
+    assert(table.Accept(provider,packet,discard0,12'000'000,false)==RadioReassemblyStatus::Accepted);
+    assert(table.Accept(provider,packet,discard1,12'500'000,false)==RadioReassemblyStatus::Complete);
+    copied=0;claimed=RadioServiceClass::Invalid;
+    assert(table.CopyCompleteForValidation(provider,source,5,validation.data(),validation.size(),copied,claimed)==RadioReassemblyStatus::Complete);
+    assert(copied==logical.size()&&claimed==RadioServiceClass::Infrastructure);
+    assert(table.DiscardComplete(provider,source,5)==RadioReassemblyStatus::Complete);
+    assert(table.TakeCompleteTrusted(provider,source,5,blocked)==RadioReassemblyStatus::NotFound);
+    assert(table.Accept(provider,packet,discard0,13'000'000,false)==RadioReassemblyStatus::RecentlyCompleted);
+
     // Expiry releases volatile ownership.
     auto expiring=MakeFragment(4,0,2,20,source,RadioServiceClass::Convergent,1,logical.data(),15,wire0);
     assert(table.Accept(provider,packet,expiring,20'000'000,true)==RadioReassemblyStatus::Accepted);
