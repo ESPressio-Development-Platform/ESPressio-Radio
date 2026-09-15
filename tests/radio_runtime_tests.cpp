@@ -9,14 +9,27 @@ using namespace ESPressio::Radio;
 
 struct FakeReassembly final {
     std::size_t ExpireCalls{0};
+    std::size_t ValidationCopies{0};
+    std::size_t Promotions{0};
     RadioReassemblyStatus Accept(IRadio&,const RadioPacketView&,const RadioTransportV3FragmentView&,std::uint64_t,bool) noexcept {
         return RadioReassemblyStatus::Accepted;
+    }
+    RadioReassemblyStatus CopyCompleteForValidation(
+        IRadio&,const RadioAddress&,RadioTransferId,std::uint8_t* output,std::size_t capacity,
+        std::size_t& bytesCopied,RadioServiceClass& claimedService) noexcept {
+        constexpr std::uint8_t payload[3]{4,5,6};
+        bytesCopied=0;claimedService=RadioServiceClass::Responsive;
+        if(capacity<sizeof(payload)||output==nullptr) return RadioReassemblyStatus::BufferTooSmall;
+        for(std::size_t i=0;i<sizeof(payload);++i) output[i]=payload[i];
+        bytesCopied=sizeof(payload);++ValidationCopies;
+        return RadioReassemblyStatus::Complete;
     }
     RadioReassemblyStatus TakeCompleteTrusted(IRadio&,const RadioAddress&,RadioTransferId,RadioCompletedReassembly&) noexcept {
         return RadioReassemblyStatus::Complete;
     }
-    RadioReassemblyStatus PromoteCompleted(IRadio&,const RadioAddress&,RadioTransferId,RadioServiceClass) noexcept {
-        return RadioReassemblyStatus::Complete;
+    RadioReassemblyStatus PromoteCompleted(IRadio&,const RadioAddress&,RadioTransferId,RadioServiceClass service) noexcept {
+        if(service!=RadioServiceClass::Responsive) return RadioReassemblyStatus::Malformed;
+        ++Promotions;return RadioReassemblyStatus::Complete;
     }
     std::size_t Expire(std::uint64_t) noexcept { ++ExpireCalls; return 0; }
 };
@@ -104,8 +117,18 @@ int main(){
     const auto submitted=runtime.SubmitPeer(peer,profile,timing,payload,sizeof(payload));
     assert(submitted&&submitted.TransferId==42&&scheduler.SubmitCalls==1);
 
-    runtime.RadioReassemblyReady(provider,peerAddress,11,RadioServiceClass::Responsive);
-    assert(ready.Count==1&&ready.Last&&ready.Last.TransferId==11&&ready.Last.DirectPeer);
+    runtime.RadioReassemblyReady(provider,peerAddress,11,RadioServiceClass::Responsive,false);
+    assert(ready.Count==1&&ready.Last&&ready.Last.TransferId==11&&ready.Last.DirectPeer&&ready.Last.IsQuarantined());
+    std::array<std::uint8_t,3> validation{};std::size_t copied=0;RadioServiceClass claimed=RadioServiceClass::Invalid;
+    assert(runtime.CopyInboundForValidation(ready.Last,validation.data(),validation.size(),copied,claimed)==RadioReassemblyStatus::Complete);
+    assert(copied==validation.size()&&validation[0]==4&&validation[1]==5&&validation[2]==6);
+    assert(claimed==RadioServiceClass::Responsive&&reassembly.ValidationCopies==1);
+    assert(runtime.PromoteInbound(ready.Last,claimed)==RadioReassemblyStatus::Complete&&reassembly.Promotions==1);
+    RadioCompletedReassembly taken;
+    assert(runtime.TakeInbound(ready.Last,taken)==RadioReassemblyStatus::Complete);
+
+    runtime.RadioReassemblyReady(provider,peerAddress,12,RadioServiceClass::Critical,true);
+    assert(ready.Count==2&&ready.Last.TransferId==12&&ready.Last.IsTrusted());
 
     assert(runtime.Shutdown()==RadioRuntimeStatus::Success);
     assert(!runtime.IsRunning()&&!provider.Started&&provider.Receiver==nullptr);
