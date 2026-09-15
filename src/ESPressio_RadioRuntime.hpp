@@ -88,7 +88,9 @@ public:
 /// Radio-owned until a fixed infrastructure consumer explicitly TakeInbound()s the complete lease; readiness notification
 /// itself transfers no bytes and therefore cannot lose ownership under downstream backpressure. Quarantined completions
 /// may first be copied into caller-owned bounded storage for higher-layer authentication; only an explicit successful
-/// PromoteInbound() moves the retained Radio record into trusted protected/shared capacity.
+/// PromoteInbound() moves the retained Radio record into trusted protected/shared capacity. A consumer that has copied or
+/// rejected a complete record may instead DiscardInbound() that exact handle, which releases Radio ownership without any
+/// trust promotion or semantic-admission implication.
 ///
 /// Domain schedulers/runtimes are composition-owned concrete objects registered before Initialize(). RadioRuntime freezes
 /// that topology, installs itself as the one provider ingress receiver, starts/stops providers and domain tasks in bounded
@@ -419,6 +421,16 @@ public:
         }
         return _reassembly->CopyCompleteForValidation(
             *handle.Provider,handle.Source,handle.TransferId,output,capacity,bytesCopied,claimedService);
+    }
+
+    /// <summary>Releases one exact complete inbound record without promotion or semantic-admission evidence.</summary>
+    RadioReassemblyStatus DiscardInbound(const RadioInboundTransferHandle& handle) noexcept {
+        if(!handle.IsValid()) return RadioReassemblyStatus::NotFound;
+        {
+            std::lock_guard<System::Synchronization::Mutex> lock(_mutex);
+            if(!_running || FindProvider(*handle.Provider)>=_providerCount) return RadioReassemblyStatus::NotFound;
+        }
+        return _reassembly->DiscardComplete(*handle.Provider,handle.Source,handle.TransferId);
     }
 
     RadioReassemblyStatus TakeInbound(
