@@ -91,6 +91,17 @@ struct ResultSink final : IRadioRuntimeTransferResultSink {
     void RadioLogicalTransferResolved(const RadioRuntimeTransferResult& result) noexcept override {++Count;Last=result;}
 };
 
+struct ClockSink final : IRadioClockFrameSink {
+    unsigned Count{0};
+    IRadio* LastProvider{nullptr};
+    std::size_t LastBytes{0};
+    std::uint64_t LastTimestamp{0};
+    void OnRadioClockFrame(
+        IRadio& provider,const RadioPacketView& packet,const RadioReceiveTimestampEvidence& timestamp) noexcept override {
+        ++Count;LastProvider=&provider;LastBytes=packet.PayloadSize;LastTimestamp=timestamp.MonotonicNanoseconds;
+    }
+};
+
 int main(){
     FakeReassembly reassembly;
     FakeScheduler scheduler;
@@ -98,12 +109,15 @@ int main(){
     FakeProvider provider;
     ReadySink ready;
     ResultSink results;
+    ClockSink clock;
     RadioRuntime<FakeReassembly,1,1,4> runtime(reassembly);
 
     assert(runtime.RegisterDomain({7},scheduler,domainRuntime)==RadioRuntimeStatus::Success);
     assert(runtime.RegisterProvider(provider)==RadioRuntimeStatus::Success);
+    assert(runtime.SetProviderClockFrameSink(provider,&clock)==RadioRuntimeStatus::Success);
     assert(scheduler.Bound);
     assert(runtime.Initialize(&ready,&results)==RadioRuntimeStatus::Success);
+    assert(runtime.SetProviderClockFrameSink(provider,nullptr)==RadioRuntimeStatus::Frozen);
     assert(domainRuntime.InitializeCalls==1);
     assert(provider.Receiver!=nullptr);
     assert(runtime.Start()==RadioRuntimeStatus::Success);
@@ -137,6 +151,13 @@ int main(){
 
     runtime.RadioReassemblyReady(provider,peerAddress,13,RadioServiceClass::Critical,true);
     assert(ready.Count==3&&ready.Last.TransferId==13&&ready.Last.IsTrusted());
+
+    const std::uint8_t clockByte=0x44;
+    RadioPacketView clockPacket{};clockPacket.Source=peerAddress;clockPacket.Destination=provider.LocalAddress();
+    clockPacket.Payload=&clockByte;clockPacket.PayloadSize=1;
+    RadioReceiveTimestampEvidence clockTimestamp{};clockTimestamp.MonotonicNanoseconds=123456;
+    runtime.OnRadioClockFrame(provider,clockPacket,clockTimestamp);
+    assert(clock.Count==1&&clock.LastProvider==&provider&&clock.LastBytes==1&&clock.LastTimestamp==123456);
 
     assert(runtime.Shutdown()==RadioRuntimeStatus::Success);
     assert(!runtime.IsRunning()&&!provider.Started&&provider.Receiver==nullptr);
