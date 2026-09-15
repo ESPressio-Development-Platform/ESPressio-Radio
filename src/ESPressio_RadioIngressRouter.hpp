@@ -23,7 +23,7 @@ public:
         const RadioReceiveTimestampEvidence& timestamp) noexcept = 0;
 };
 
-/// <summary>Fixed notification that one trusted v3 logical transfer has become complete.</summary>
+/// <summary>Fixed notification that one v3 logical transfer has become complete in trusted or quarantined Q1 storage.</summary>
 class IRadioReassemblyReadySink {
 public:
     virtual ~IRadioReassemblyReadySink() = default;
@@ -31,7 +31,8 @@ public:
         IRadio& provider,
         const RadioAddress& source,
         RadioTransferId transferId,
-        RadioServiceClass service) noexcept = 0;
+        RadioServiceClass service,
+        bool trusted) noexcept = 0;
 };
 
 /// <summary>Optional fixed trust classifier used before v3 bytes enter protected trusted Q1 domains.</summary>
@@ -65,8 +66,10 @@ struct RadioIngressRouterStatistics final {
 /// Providers install exactly this Radio-owned receiver rather than competing Clock/transport receivers. Clock magic is
 /// consumed as Clock even when malformed so corrupt Clock frames cannot fall through and masquerade as v3. Ordinary v3
 /// traffic enters the fixed reassembly table; untrusted ingress remains quarantined unless the configured fixed trust
-/// classifier explicitly admits it. The physical receive monotonic coordinate is preferred for residence accounting so
-/// provider/service queue delay never silently extends a sender's remaining residence budget.
+/// classifier explicitly admits it. Completion notification transfers no byte ownership and explicitly carries the
+/// current trust state, allowing an upper trust layer to copy/authenticate a quarantined logical transfer before explicit
+/// promotion. The physical receive monotonic coordinate is preferred for residence accounting so provider/service queue
+/// delay never silently extends a sender's remaining residence budget.
 /// </remarks>
 template<class TReassemblyTable>
 class RadioIngressRouter final : public IRadioReceiver {
@@ -126,9 +129,9 @@ public:
         if(now==0) now=System::Clock::Monotonic().NowNanoseconds();
         const bool trusted=_trust.Evaluate(provider,packet,fragment);
         const auto status=_reassembly->Accept(provider,packet,fragment,now,trusted);
-        if(status==RadioReassemblyStatus::Complete && trusted && _ready) {
+        if(status==RadioReassemblyStatus::Complete && _ready) {
             _ready->RadioReassemblyReady(
-                provider,fragment.Header.Source,fragment.Header.TransferId,fragment.Header.ServiceClass);
+                provider,fragment.Header.Source,fragment.Header.TransferId,fragment.Header.ServiceClass,trusted);
         } else if(status==RadioReassemblyStatus::Busy || status==RadioReassemblyStatus::ResourceUnavailable) {
             _resourceRejected.fetch_add(1,std::memory_order_relaxed);
         } else if(status==RadioReassemblyStatus::Malformed || status==RadioReassemblyStatus::Expired) {
