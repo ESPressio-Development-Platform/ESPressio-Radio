@@ -92,6 +92,11 @@ public:
 /// rejected a complete record may instead DiscardInbound() that exact handle, which releases Radio ownership without any
 /// trust promotion or semantic-admission implication.
 ///
+/// RadioRuntime remains the sole managed-provider IRadioReceiver. Optional provider-scoped Clock sinks are registered
+/// before initialization; compact direct Clock frames are routed to the sink bound to the physical provider while normal
+/// v3 traffic remains on the family-opaque reassembly path. This preserves one ingress owner even when a contention-domain
+/// Clock coordinator is installed as the domain's fixed service extension/result sink.
+///
 /// Domain schedulers/runtimes are composition-owned concrete objects registered before Initialize(). RadioRuntime freezes
 /// that topology, installs itself as the one provider ingress receiver, starts/stops providers and domain tasks in bounded
 /// order, maintains generation-safe direct-peer handles and qualifies terminal results by contention domain so identical
@@ -107,7 +112,7 @@ template<class TReassemblyTable,
          std::size_t TMaximumDomains,
          std::size_t TMaximumProviders,
          std::size_t TMaximumPeers>
-class RadioRuntime final : public IRadioReassemblyReadySink {
+class RadioRuntime final : public IRadioReassemblyReadySink, public IRadioClockFrameSink {
     static_assert(TMaximumDomains>0 && TMaximumProviders>0 && TMaximumPeers>0);
 
     class DomainRelay final : public IRadioTransferResultSink {
@@ -138,6 +143,7 @@ class RadioRuntime final : public IRadioReassemblyReadySink {
 
     struct ProviderBinding final {
         IRadio* Provider{nullptr};
+        IRadioClockFrameSink* ClockSink{nullptr};
         std::size_t DomainIndex{TMaximumDomains};
         bool Started{false};
     };
@@ -210,6 +216,10 @@ class RadioRuntime final : public IRadioReassemblyReadySink {
             if(_providers[i].Provider==&provider) return i;
         return TMaximumProviders;
     }
+    bool HasClockSink() const noexcept {
+        for(std::size_t i=0;i<_providerCount;++i) if(_providers[i].ClockSink) return true;
+        return false;
+    }
     void OnDomainTransferResolved(std::size_t index,const RadioTransferTerminalResult& result) noexcept {
         IRadioRuntimeTransferResultSink* sink=nullptr;
         RadioContentionDomainId domain{};
@@ -266,7 +276,18 @@ public:
         if(domainIndex>=_domainCount) return RadioRuntimeStatus::InvalidConfiguration;
         const auto bound=_domains[domainIndex].BindProvider(_domains[domainIndex].Scheduler,provider);
         if(bound!=RadioSchedulerStatus::Success) return RadioRuntimeStatus::InvalidConfiguration;
-        _providers[_providerCount++]={&provider,domainIndex,false};
+        _providers[_providerCount++]={&provider,nullptr,domainIndex,false};
+        return RadioRuntimeStatus::Success;
+    }
+
+    /// <summary>Binds one provider's compact direct Clock ingress sink before the runtime topology freezes.</summary>
+    RadioRuntimeStatus SetProviderClockFrameSink(IRadio& provider,IRadioClockFrameSink* sink) noexcept {
+        std::lock_guard<System::Synchronization::Mutex> lock(_mutex);
+        if(_terminallyShutdown) return RadioRuntimeStatus::TerminallyShutdown;
+        if(_initialized) return RadioRuntimeStatus::Frozen;
+        const auto providerIndex=FindProvider(provider);
+        if(providerIndex>=_providerCount) return RadioRuntimeStatus::InvalidConfiguration;
+        _providers[providerIndex].ClockSink=sink;
         return RadioRuntimeStatus::Success;
     }
 
@@ -302,7 +323,7 @@ public:
         _readySink=readySink;
         _resultSink=resultSink;
         _trust=trust;
-        _ingress.Configure(nullptr,this,_trust);
+        _ingress.Configure(HasClockSink()?static_cast<IRadioClockFrameSink*>(this):nullptr,this,_trust);
         std::size_t initializedDomains=0;
         for(;initializedDomains<_domainCount;++initializedDomains) {
             auto& domain=_domains[initializedDomains];
@@ -515,6 +536,21 @@ public:
         if(sink) sink->RadioLogicalTransferReady({
             &provider,peer,source,transferId,service,
             trusted?RadioInboundTrustState::Trusted:RadioInboundTrustState::Quarantined});
+    }
+
+    void OnRadioClockFrame(
+        IRadio& provider,
+        const RadioPacketView& packet,
+        const RadioReceiveTimestampEvidence& timestamp) noexcept override {
+        IRadioClockFrameSink* sink=nullptr;
+        {
+            std::lock_guard<System::Synchronization::Mutex> lock(_mutex);
+            if(!_running) return;
+            const auto providerIndex=FindProvider(provider);
+            if(providerIndex>=_providerCount) return;
+            sink=_providers[providerIndex].ClockSink;
+        }
+        if(sink) sink->OnRadioClockFrame(provider,packet,timestamp);
     }
 };
 
