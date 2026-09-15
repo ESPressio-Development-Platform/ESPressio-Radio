@@ -4,6 +4,7 @@
 #include "ESPressio_RadioProviderContract.hpp"
 #include "ESPressio_IRadio.hpp"
 #include "ESPressio_RadioServiceProfile.hpp"
+#include "ESPressio_RadioMonotonicClock.hpp"
 #include "ESPressio_RadioCapacity.hpp"
 #include "ESPressio_RadioWireV3.hpp"
 #include "ESPressio_RadioTransferId.hpp"
