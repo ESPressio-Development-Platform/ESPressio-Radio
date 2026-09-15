@@ -28,10 +28,18 @@ enum class RadioRuntimeStatus : std::uint8_t {
     TerminallyShutdown
 };
 
+enum class RadioInboundTrustState : std::uint8_t {
+    Invalid = 0,
+    Quarantined,
+    Trusted
+};
+
 /// <summary>Stable notification handle for one complete Radio-owned inbound logical transfer.</summary>
 /// <remarks>
 /// Provider and Source are direct-link facts only. DirectPeer is a process-local convenience handle and must never be
-/// reinterpreted as authenticated original semantic provenance by RadioAdapters, Mesh or a Primitive family.
+/// reinterpreted as authenticated original semantic provenance by RadioAdapters, Mesh or a Primitive family. Quarantined
+/// service-class claims are descriptive only: protected capacity is granted solely after a higher trust layer validates
+/// the copied logical payload and explicitly promotes the same service class.
 /// </remarks>
 struct RadioInboundTransferHandle final {
     IRadio* Provider{nullptr};
@@ -39,10 +47,14 @@ struct RadioInboundTransferHandle final {
     RadioAddress Source{};
     RadioTransferId TransferId{0};
     RadioServiceClass Service{RadioServiceClass::Invalid};
+    RadioInboundTrustState Trust{RadioInboundTrustState::Invalid};
 
     bool IsValid() const noexcept {
-        return Provider!=nullptr && Source.IsValid() && TransferId!=0 && IsValidRadioServiceClass(Service);
+        return Provider!=nullptr && Source.IsValid() && TransferId!=0 && IsValidRadioServiceClass(Service) &&
+               Trust!=RadioInboundTrustState::Invalid;
     }
+    bool IsTrusted() const noexcept { return Trust==RadioInboundTrustState::Trusted; }
+    bool IsQuarantined() const noexcept { return Trust==RadioInboundTrustState::Quarantined; }
     explicit operator bool() const noexcept { return IsValid(); }
 };
 
@@ -52,7 +64,7 @@ struct RadioRuntimeTransferResult final {
     RadioTransferTerminalResult Result{};
 };
 
-/// <summary>Fixed infrastructure sink notified when complete Radio-owned logical bytes are ready to be taken.</summary>
+/// <summary>Fixed infrastructure sink notified when complete Radio-owned logical bytes are ready for validation/take.</summary>
 class IRadioLogicalTransferReadySink {
 public:
     virtual ~IRadioLogicalTransferReadySink() = default;
@@ -74,7 +86,9 @@ public:
 /// codec and never borrows caller payload memory after SubmitDirect/SubmitPeer returns. Each configured scheduler performs
 /// the locked transactional Radio-local record+byte+queue acquisition before reporting Accepted. Inbound reassembly stays
 /// Radio-owned until a fixed infrastructure consumer explicitly TakeInbound()s the complete lease; readiness notification
-/// itself transfers no bytes and therefore cannot lose ownership under downstream backpressure.
+/// itself transfers no bytes and therefore cannot lose ownership under downstream backpressure. Quarantined completions
+/// may first be copied into caller-owned bounded storage for higher-layer authentication; only an explicit successful
+/// PromoteInbound() moves the retained Radio record into trusted protected/shared capacity.
 ///
 /// Domain schedulers/runtimes are composition-owned concrete objects registered before Initialize(). RadioRuntime freezes
 /// that topology, installs itself as the one provider ingress receiver, starts/stops providers and domain tasks in bounded
@@ -389,6 +403,24 @@ public:
         return SubmitDirect(*binding.Interface,binding.Address,profile,timing,payload,payloadBytes,correlation);
     }
 
+    /// <summary>Copies a complete retained logical payload into caller-owned bounded storage for trust validation.</summary>
+    RadioReassemblyStatus CopyInboundForValidation(
+        const RadioInboundTransferHandle& handle,
+        std::uint8_t* output,
+        std::size_t capacity,
+        std::size_t& bytesCopied,
+        RadioServiceClass& claimedService) noexcept {
+        bytesCopied=0;
+        claimedService=RadioServiceClass::Invalid;
+        if(!handle.IsValid()) return RadioReassemblyStatus::NotFound;
+        {
+            std::lock_guard<System::Synchronization::Mutex> lock(_mutex);
+            if(!_running || FindProvider(*handle.Provider)>=_providerCount) return RadioReassemblyStatus::NotFound;
+        }
+        return _reassembly->CopyCompleteForValidation(
+            *handle.Provider,handle.Source,handle.TransferId,output,capacity,bytesCopied,claimedService);
+    }
+
     RadioReassemblyStatus TakeInbound(
         const RadioInboundTransferHandle& handle,RadioCompletedReassembly& output) noexcept {
         if(!handle.IsValid()) return RadioReassemblyStatus::NotFound;
@@ -397,6 +429,16 @@ public:
             if(!_running || FindProvider(*handle.Provider)>=_providerCount) return RadioReassemblyStatus::NotFound;
         }
         return _reassembly->TakeCompleteTrusted(*handle.Provider,handle.Source,handle.TransferId,output);
+    }
+
+    RadioReassemblyStatus PromoteInbound(
+        const RadioInboundTransferHandle& handle,RadioServiceClass validatedService) noexcept {
+        if(!handle.IsValid()) return RadioReassemblyStatus::NotFound;
+        {
+            std::lock_guard<System::Synchronization::Mutex> lock(_mutex);
+            if(!_running || FindProvider(*handle.Provider)>=_providerCount) return RadioReassemblyStatus::NotFound;
+        }
+        return _reassembly->PromoteCompleted(*handle.Provider,handle.Source,handle.TransferId,validatedService);
     }
 
     RadioReassemblyStatus PromoteInbound(
@@ -448,7 +490,8 @@ public:
     }
 
     void RadioReassemblyReady(
-        IRadio& provider,const RadioAddress& source,RadioTransferId transferId,RadioServiceClass service) noexcept override {
+        IRadio& provider,const RadioAddress& source,RadioTransferId transferId,
+        RadioServiceClass service,bool trusted) noexcept override {
         IRadioLogicalTransferReadySink* sink=nullptr;
         RadioPeerHandle peer{};
         {
@@ -457,7 +500,9 @@ public:
             (void)_peers.Observe(provider,source,peer);
             sink=_readySink;
         }
-        if(sink) sink->RadioLogicalTransferReady({&provider,peer,source,transferId,service});
+        if(sink) sink->RadioLogicalTransferReady({
+            &provider,peer,source,transferId,service,
+            trusted?RadioInboundTrustState::Trusted:RadioInboundTrustState::Quarantined});
     }
 };
 
