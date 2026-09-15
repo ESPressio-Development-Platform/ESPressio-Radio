@@ -304,6 +304,28 @@ public:
         return RadioReassemblyStatus::Complete;
     }
 
+    /// <summary>Releases one exact completed logical transfer without granting trusted or semantic admission evidence.</summary>
+    /// <remarks>
+    /// This is the terminal rejection/ownership-handoff counterpart to CopyCompleteForValidation(). It is valid for both
+    /// quarantined and trusted records and remembers only the Radio-local transport identity so late duplicate fragments
+    /// cannot recreate the same completed R3 transfer. It does not promote service class, establish Primitive admission,
+    /// or publish any higher-layer delivery fact.
+    /// </remarks>
+    RadioReassemblyStatus DiscardComplete(
+        IRadio& provider,
+        const RadioAddress& source,
+        RadioTransferId transferId) noexcept {
+        std::unique_lock<System::Synchronization::Mutex> lock(_mutex,std::try_to_lock);
+        if(!lock.owns_lock()) return RadioReassemblyStatus::Busy;
+        const auto index=Find(provider,source,transferId);
+        if(index==_active.size()) return RadioReassemblyStatus::NotFound;
+        const auto& record=_active[index].template Get<RadioReassemblyRecord>();
+        if(!record.IsComplete()) return RadioReassemblyStatus::NotFound;
+        _recent.Remember(provider,source,transferId);
+        _active[index].Reset();
+        return RadioReassemblyStatus::Complete;
+    }
+
     RadioReassemblyStatus PromoteCompleted(
         IRadio& provider,
         const RadioAddress& source,
